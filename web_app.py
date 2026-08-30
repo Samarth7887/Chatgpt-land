@@ -11,7 +11,16 @@ from pathlib import Path
 from string import Template
 from time import perf_counter
 
-from land_document_extractor import extract_land_document, get_paddle_ocr_model
+import requests
+from land_document_extractor import (
+    extract_land_document,
+    get_paddle_ocr_model,
+    extract_land_document_from_lines,
+    group_words_into_lines,
+    OCRWord,
+    OCRLine,
+    normalize_space,
+)
 
 
 HTML_PAGE = Template("""<!doctype html>
@@ -168,9 +177,46 @@ HTML_PAGE = Template("""<!doctype html>
       </section>
       <section class="card upload">
         <form action="/extract" method="post" enctype="multipart/form-data">
-          <input type="file" name="document_image" accept="image/*" required>
+          <div>
+            <label for="document_image" style="font-weight: 700; display: block; margin-bottom: 6px;">Select Document Image:</label>
+            <input type="file" name="document_image" id="document_image" accept="image/*" required>
+          </div>
+          
+          <div style="display: grid; gap: 6px;">
+            <label for="processing_mode" style="font-weight: 700;">Processing Mode:</label>
+            <select name="processing_mode" id="processing_mode" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white;">
+              <option value="cpu" $cpu_selected>Local CPU</option>
+              <option value="gpu" $gpu_selected>Google Colab GPU</option>
+            </select>
+          </div>
+          
+          <div id="colab_url_container" style="display: none; gap: 6px;">
+            <label for="colab_url" style="font-weight: 700; display: block;">Colab OCR URL:</label>
+            <input type="url" name="colab_url" id="colab_url" placeholder="https://xxxx.localtunnel.me" value="$colab_url_value" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white; width: 100%;">
+          </div>
+          
           <button type="submit">Upload and Extract</button>
         </form>
+        
+        <script>
+          const modeSelect = document.getElementById('processing_mode');
+          const colabContainer = document.getElementById('colab_url_container');
+          const colabInput = document.getElementById('colab_url');
+          
+          function toggleColabUrl() {
+            if (modeSelect.value === 'gpu') {
+              colabContainer.style.display = 'grid';
+              colabInput.required = true;
+            } else {
+              colabContainer.style.display = 'none';
+              colabInput.required = false;
+            }
+          }
+          
+          modeSelect.addEventListener('change', toggleColabUrl);
+          toggleColabUrl();
+        </script>
+        
         <div class="status">Run this locally, then open <strong>http://127.0.0.1:8000</strong>.</div>
       </section>
     </div>
@@ -183,6 +229,7 @@ HTML_PAGE = Template("""<!doctype html>
       <section class="card output">
         <h2>Extraction Result</h2>
         <p>$message</p>
+        $timing_info
         <pre>$payload</pre>
       </section>
     </div>
@@ -192,11 +239,23 @@ HTML_PAGE = Template("""<!doctype html>
 """)
 
 
-def render_page(payload: str = "{}", message: str = "Upload a file to see the extracted JSON.", preview: str = "") -> bytes:
+def render_page(
+    payload: str = "{}",
+    message: str = "Upload a file to see the extracted JSON.",
+    preview: str = "",
+    cpu_selected: str = "selected",
+    gpu_selected: str = "",
+    colab_url_value: str = "",
+    timing_info: str = "",
+) -> bytes:
     return HTML_PAGE.substitute(
         payload=html.escape(payload),
         message=html.escape(message),
         preview=preview or "<p>No image uploaded yet.</p>",
+        cpu_selected=cpu_selected,
+        gpu_selected=gpu_selected,
+        colab_url_value=colab_url_value or os.environ.get("COLAB_OCR_URL", ""),
+        timing_info=timing_info,
     ).encode("utf-8")
 
 
@@ -206,7 +265,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
-        page = render_page()
+        page = render_page(colab_url_value=os.environ.get("COLAB_OCR_URL", ""))
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(page)))
@@ -235,19 +294,30 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
         parts = body.split(b"--" + boundary)
         uploaded = None
         filename = "uploaded_image"
+        processing_mode = "cpu"
+        colab_url = ""
 
         for part in parts:
-            if b"Content-Disposition" not in part or b"name=\"document_image\"" not in part:
+            if b"Content-Disposition" not in part:
                 continue
-            header_blob, _, file_blob = part.partition(b"\r\n\r\n")
-            if not file_blob:
-                continue
-            disposition = header_blob.decode("utf-8", errors="ignore")
-            match = re.search(r'filename="([^"]+)"', disposition)
-            if match:
-                filename = Path(match.group(1)).name
-            uploaded = file_blob.rsplit(b"\r\n", 1)[0]
-            break
+            
+            if b"name=\"document_image\"" in part:
+                header_blob, _, file_blob = part.partition(b"\r\n\r\n")
+                if not file_blob:
+                    continue
+                disposition = header_blob.decode("utf-8", errors="ignore")
+                match = re.search(r'filename="([^"]+)"', disposition)
+                if match:
+                    filename = Path(match.group(1)).name
+                uploaded = file_blob.rsplit(b"\r\n", 1)[0]
+                
+            elif b"name=\"processing_mode\"" in part:
+                _, _, val_blob = part.partition(b"\r\n\r\n")
+                processing_mode = val_blob.rsplit(b"\r\n", 1)[0].decode("utf-8").strip()
+                
+            elif b"name=\"colab_url\"" in part:
+                _, _, val_blob = part.partition(b"\r\n\r\n")
+                colab_url = val_blob.rsplit(b"\r\n", 1)[0].decode("utf-8").strip()
 
         if not uploaded:
             self.send_error(HTTPStatus.BAD_REQUEST, "No file was uploaded")
@@ -255,21 +325,113 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
 
         suffix = Path(filename).suffix or ".png"
         temp_path = None
+        cpu_sel = "selected" if processing_mode == "cpu" else ""
+        gpu_sel = "selected" if processing_mode == "gpu" else ""
 
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(uploaded)
                 temp_path = tmp.name
 
-            result = extract_land_document(temp_path)
-            result.setdefault("profiling_ms", {})
-            json_start = perf_counter()
-            payload = json.dumps(result, indent=2, ensure_ascii=False)
-            result["profiling_ms"]["json_generation_ms"] = round((perf_counter() - json_start) * 1000, 3)
-            result["profiling_ms"]["total_processing_ms"] = round(
-                result["profiling_ms"].get("pipeline_total_ms", 0.0) + result["profiling_ms"]["json_generation_ms"],
-                3,
-            )
+            timing_info = ""
+
+            if processing_mode == "gpu":
+                # Google Colab GPU OCR Path
+                t_total_start = perf_counter()
+                
+                # Check status first
+                try:
+                    status_url = f"{colab_url.rstrip('/')}/status"
+                    status_resp = requests.get(status_url, timeout=5)
+                    if status_resp.status_code != 200:
+                        raise ValueError(f"Colab status check returned status code {status_resp.status_code}")
+                    gpu_name = status_resp.json().get("gpu_name", "NVIDIA GPU")
+                except Exception as e:
+                    raise ConnectionError(f"Google Colab GPU is unavailable at this URL. Details: {e}")
+                
+                # Post image to Colab
+                ocr_url = f"{colab_url.rstrip('/')}/ocr"
+                t_net_start = perf_counter()
+                
+                with open(temp_path, "rb") as f:
+                    ocr_resp = requests.post(ocr_url, files={"image": f}, timeout=45)
+                
+                t_net_end = perf_counter()
+                total_request_time = (t_net_end - t_net_start) * 1000
+                
+                if ocr_resp.status_code != 200:
+                    try:
+                        err_msg = ocr_resp.json().get("error", ocr_resp.text)
+                    except Exception:
+                        err_msg = ocr_resp.text
+                    raise ValueError(f"Colab OCR failed with status {ocr_resp.status_code}: {err_msg}")
+                
+                gpu_result = ocr_resp.json()
+                ocr_time_ms = gpu_result.get("ocr_time_ms", 0.0)
+                gpu_name = gpu_result.get("gpu_name", gpu_name)
+                network_time_ms = max(0.0, total_request_time - ocr_time_ms)
+                
+                # Translate PaddleOCR 3.x results to local OCRLine structures
+                words = []
+                for text, score, poly in zip(gpu_result["rec_texts"], gpu_result["rec_scores"], gpu_result["rec_polys"]):
+                    cleaned = normalize_space(str(text))
+                    if not cleaned:
+                        continue
+                    words.append(
+                        OCRWord(
+                            text=cleaned,
+                            score=float(score),
+                            points=[[int(pt[0]), int(pt[1])] for pt in poly],
+                        )
+                    )
+                
+                lines = group_words_into_lines(words)
+                raw_text = "\n".join(l.text for l in lines)
+                
+                # Run existing local extraction parser
+                gpu_ocr_timings = {
+                    "model_initialization_ms": 0.0,
+                    "model_access_ms": 0.0,
+                    "image_reading_ms": 0.0,
+                    "ocr_inference_ms": ocr_time_ms,
+                    "ocr_word_parsing_ms": 0.0,
+                    "line_grouping_ms": 0.0,
+                    "ocr_text_join_ms": 0.0,
+                    "ocr_total_ms": ocr_time_ms
+                }
+                
+                result = extract_land_document_from_lines(lines, raw_text, temp_path, timings=gpu_ocr_timings)
+                
+                total_time_ms = (perf_counter() - t_total_start) * 1000
+                result.setdefault("profiling_ms", {})
+                result["profiling_ms"]["pipeline_total_ms"] = round(total_time_ms, 3)
+                
+                timing_info = f"""
+                <div style="background: rgba(31, 41, 55, 0.05); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); font-size: 14px; display: grid; gap: 8px;">
+                  <div><strong>Processing Mode:</strong> Google Colab GPU</div>
+                  <div><strong>GPU Status:</strong> <span style="color: #14532d; font-weight: bold;">✓ Connected</span></div>
+                  <div><strong>GPU Hardware:</strong> {gpu_name}</div>
+                  <div><strong>OCR Inference Time:</strong> {ocr_time_ms:.2f} ms</div>
+                  <div><strong>Network Transit Time:</strong> {network_time_ms:.2f} ms</div>
+                  <div><strong>Total Processing Time:</strong> {total_time_ms:.2f} ms</div>
+                </div>
+                """
+            else:
+                # Local CPU Path (untouched logic)
+                t_total_start = perf_counter()
+                result = extract_land_document(temp_path)
+                total_time_ms = (perf_counter() - t_total_start) * 1000
+                
+                ocr_time_ms = result.get("profiling_ms", {}).get("ocr_total_ms", 0.0)
+                
+                timing_info = f"""
+                <div style="background: rgba(31, 41, 55, 0.05); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); font-size: 14px; display: grid; gap: 8px;">
+                  <div><strong>Processing Mode:</strong> Local CPU</div>
+                  <div><strong>OCR Inference Time:</strong> {ocr_time_ms:.2f} ms</div>
+                  <div><strong>Total Processing Time:</strong> {total_time_ms:.2f} ms</div>
+                </div>
+                """
+
             payload = json.dumps(result, indent=2, ensure_ascii=False)
             mime_type = mimetypes.guess_type(filename)[0] or "image/png"
             image_data = base64.b64encode(uploaded).decode("ascii")
@@ -286,6 +448,10 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 message=message,
                 preview=f'<p><strong>{html.escape(filename)}</strong></p>{preview}',
+                cpu_selected=cpu_sel,
+                gpu_selected=gpu_sel,
+                colab_url_value=colab_url,
+                timing_info=timing_info,
             )
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -299,7 +465,23 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             error_payload = json.dumps({"error": str(exc)}, indent=2)
-            page = render_page(payload=error_payload, message="Extraction failed.")
+            
+            timing_info = f"""
+            <div style="background: rgba(220, 38, 38, 0.08); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid #fecaca; font-size: 14px; display: grid; gap: 8px; color: #991b1b;">
+              <div><strong>Processing Mode:</strong> Google Colab GPU</div>
+              <div><strong>GPU Status:</strong> <span style="font-weight: bold;">✗ Unavailable</span></div>
+              <div><strong>Error Details:</strong> {html.escape(str(exc))}</div>
+            </div>
+            """ if processing_mode == "gpu" else ""
+            
+            page = render_page(
+                payload=error_payload,
+                message="Extraction failed.",
+                cpu_selected=cpu_sel,
+                gpu_selected=gpu_sel,
+                colab_url_value=colab_url,
+                timing_info=timing_info
+            )
             self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(page)))
