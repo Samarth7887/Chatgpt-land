@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.cache/
+.paddlex/
+.paddlex-cache/
+.idea/
+.vscode/
+
+# Local configuration / outputs
+land_document_output.json
+*.log
+
+# Debug images
+*big.png
+*debug.png
+*thresh.png
+*crop*.png
