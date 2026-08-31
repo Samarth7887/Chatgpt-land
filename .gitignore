@@ -7,6 +7,7 @@ __pycache__/
 .vscode/
 
 # Local configuration / outputs
+colab_url.txt
 land_document_output.json
 *.log
 

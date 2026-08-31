@@ -22,6 +22,31 @@ from land_document_extractor import (
     normalize_space,
 )
 
+# =====================================================================
+# Kaggle / Colab OCR Tunnel Configuration
+# =====================================================================
+# You can paste your tunnel link here. 
+# Alternatively, write it to a file named 'colab_url.txt' in the same folder, 
+# or set the 'COLAB_OCR_URL' environment variable.
+COLAB_OCR_URL = "https://variance-die-made-taxi.trycloudflare.com"
+
+def get_colab_url() -> str:
+    # 1. Environment Variable
+    env_val = os.environ.get("COLAB_OCR_URL")
+    if env_val:
+        return env_val.strip()
+    
+    # 2. Local config file
+    txt_path = Path(__file__).parent / "colab_url.txt"
+    if txt_path.exists():
+        try:
+            return txt_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+            
+    # 3. Fallback to the Python constant above
+    return COLAB_OCR_URL.strip()
+
 
 HTML_PAGE = Template("""<!doctype html>
 <html lang="en">
@@ -190,32 +215,8 @@ HTML_PAGE = Template("""<!doctype html>
             </select>
           </div>
           
-          <div id="colab_url_container" style="display: none; gap: 6px;">
-            <label for="colab_url" style="font-weight: 700; display: block;">Kaggle / Colab OCR URL:</label>
-            <input type="url" name="colab_url" id="colab_url" placeholder="https://xxxx.localtunnel.me" value="$colab_url_value" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white; width: 100%;">
-          </div>
-          
           <button type="submit">Upload and Extract</button>
         </form>
-        
-        <script>
-          const modeSelect = document.getElementById('processing_mode');
-          const colabContainer = document.getElementById('colab_url_container');
-          const colabInput = document.getElementById('colab_url');
-          
-          function toggleColabUrl() {
-            if (modeSelect.value === 'gpu') {
-              colabContainer.style.display = 'grid';
-              colabInput.required = true;
-            } else {
-              colabContainer.style.display = 'none';
-              colabInput.required = false;
-            }
-          }
-          
-          modeSelect.addEventListener('change', toggleColabUrl);
-          toggleColabUrl();
-        </script>
         
         <div class="status">Run this locally, then open <strong>http://127.0.0.1:8000</strong>.</div>
       </section>
@@ -265,7 +266,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
-        page = render_page(colab_url_value=os.environ.get("COLAB_OCR_URL", ""))
+        page = render_page(colab_url_value=get_colab_url())
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(page)))
@@ -295,7 +296,6 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
         uploaded = None
         filename = "uploaded_image"
         processing_mode = "cpu"
-        colab_url = ""
 
         for part in parts:
             if b"Content-Disposition" not in part:
@@ -314,10 +314,8 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             elif b"name=\"processing_mode\"" in part:
                 _, _, val_blob = part.partition(b"\r\n\r\n")
                 processing_mode = val_blob.rsplit(b"\r\n", 1)[0].decode("utf-8").strip()
-                
-            elif b"name=\"colab_url\"" in part:
-                _, _, val_blob = part.partition(b"\r\n\r\n")
-                colab_url = val_blob.rsplit(b"\r\n", 1)[0].decode("utf-8").strip()
+
+        colab_url = get_colab_url()
 
         if not uploaded:
             self.send_error(HTTPStatus.BAD_REQUEST, "No file was uploaded")
