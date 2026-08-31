@@ -186,12 +186,12 @@ HTML_PAGE = Template("""<!doctype html>
             <label for="processing_mode" style="font-weight: 700;">Processing Mode:</label>
             <select name="processing_mode" id="processing_mode" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white;">
               <option value="cpu" $cpu_selected>Local CPU</option>
-              <option value="gpu" $gpu_selected>Google Colab GPU</option>
+              <option value="gpu" $gpu_selected>Kaggle / Colab GPU</option>
             </select>
           </div>
           
           <div id="colab_url_container" style="display: none; gap: 6px;">
-            <label for="colab_url" style="font-weight: 700; display: block;">Colab OCR URL:</label>
+            <label for="colab_url" style="font-weight: 700; display: block;">Kaggle / Colab OCR URL:</label>
             <input type="url" name="colab_url" id="colab_url" placeholder="https://xxxx.localtunnel.me" value="$colab_url_value" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white; width: 100%;">
           </div>
           
@@ -336,7 +336,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             timing_info = ""
 
             if processing_mode == "gpu":
-                # Google Colab GPU OCR Path
+                # Cloud GPU (Kaggle/Colab) OCR Path
                 t_total_start = perf_counter()
                 
                 # Check status first
@@ -344,12 +344,12 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     status_url = f"{colab_url.rstrip('/')}/status"
                     status_resp = requests.get(status_url, timeout=5)
                     if status_resp.status_code != 200:
-                        raise ValueError(f"Colab status check returned status code {status_resp.status_code}")
+                        raise ValueError(f"Cloud GPU status check returned status code {status_resp.status_code}")
                     gpu_name = status_resp.json().get("gpu_name", "NVIDIA GPU")
                 except Exception as e:
-                    raise ConnectionError(f"Google Colab GPU is unavailable at this URL. Details: {e}")
+                    raise ConnectionError(f"Cloud GPU is unavailable at this URL. Details: {e}")
                 
-                # Post image to Colab
+                # Post image to GPU endpoint
                 ocr_url = f"{colab_url.rstrip('/')}/ocr"
                 t_net_start = perf_counter()
                 
@@ -364,7 +364,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                         err_msg = ocr_resp.json().get("error", ocr_resp.text)
                     except Exception:
                         err_msg = ocr_resp.text
-                    raise ValueError(f"Colab OCR failed with status {ocr_resp.status_code}: {err_msg}")
+                    raise ValueError(f"Cloud GPU OCR failed with status {ocr_resp.status_code}: {err_msg}")
                 
                 gpu_result = ocr_resp.json()
                 ocr_time_ms = gpu_result.get("ocr_time_ms", 0.0)
@@ -408,7 +408,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 
                 timing_info = f"""
                 <div style="background: rgba(31, 41, 55, 0.05); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); font-size: 14px; display: grid; gap: 8px;">
-                  <div><strong>Processing Mode:</strong> Google Colab GPU</div>
+                  <div><strong>Processing Mode:</strong> Kaggle / Colab GPU</div>
                   <div><strong>GPU Status:</strong> <span style="color: #14532d; font-weight: bold;">✓ Connected</span></div>
                   <div><strong>GPU Hardware:</strong> {gpu_name}</div>
                   <div><strong>OCR Inference Time:</strong> {ocr_time_ms:.2f} ms</div>
@@ -468,7 +468,7 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             
             timing_info = f"""
             <div style="background: rgba(220, 38, 38, 0.08); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid #fecaca; font-size: 14px; display: grid; gap: 8px; color: #991b1b;">
-              <div><strong>Processing Mode:</strong> Google Colab GPU</div>
+              <div><strong>Processing Mode:</strong> Kaggle / Colab GPU</div>
               <div><strong>GPU Status:</strong> <span style="font-weight: bold;">✗ Unavailable</span></div>
               <div><strong>Error Details:</strong> {html.escape(str(exc))}</div>
             </div>
@@ -494,8 +494,13 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     print("Pre-loading PaddleOCR models (this may take a moment)...")
-    get_paddle_ocr_model()
-    print("PaddleOCR models pre-loaded successfully!")
+    try:
+        get_paddle_ocr_model()
+        print("PaddleOCR models pre-loaded successfully!")
+    except Exception as exc:
+        # Keep the web app available even if the local OCR cache is broken.
+        # GPU mode can still work through the remote OCR endpoint.
+        print(f"Warning: local PaddleOCR preload failed, starting server anyway: {exc}")
     server = ThreadingHTTPServer(("127.0.0.1", 8000), LandExtractorHandler)
     print("Land extractor web app running at http://127.0.0.1:8000")
     try:
