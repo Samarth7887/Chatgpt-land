@@ -252,7 +252,7 @@ def _date_from_labeled_text(text: str, labels: tuple[str, ...]) -> str | None:
 
 def parse_execution_date(text: str) -> str | None:
     pattern = re.compile(
-        r"EXECUT(?:ED|ION)?\s+ON\s+THIS\s+(\d{1,2})(?:ST|ND|RD|TH)?\s+DAY\s+OF\s+([A-Z]+)[\s\-/,]+(\d{4})",
+        r"(?:EXECUT(?:ED|ION)?|ENTERED\s+INTO|MADE)\s+(?:ON\s+)?THIS\s+(?:THE\s+)?(\d{1,2})(?:ST|ND|RD|TH)?\s+DAY\s+OF\s+([A-Z]+)[\s\-/,]+(\d{4})",
         re.IGNORECASE,
     )
     match = pattern.search(text)
@@ -290,8 +290,9 @@ def extract_stamp_number_from_text(text: str) -> str | None:
 
 
 def extract_document_number_from_text(text: str) -> str | None:
+    # Strictly require document prefix so dates (e.g. 03-08-2019) do not match as document numbers
     pattern = re.compile(
-        r"\b(?:D|DOC(?:UMENT)?)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
+        r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
         re.IGNORECASE
     )
     match = pattern.search(text)
@@ -302,12 +303,18 @@ def extract_document_number_from_text(text: str) -> str | None:
     candidate = extract_pattern(
         text,
         [
+            r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?)\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
             r"\bD\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
-            r"\bDOC(?:UMENT)?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
             r"\bD\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s+[0-9]{2,4})",
         ],
     )
     if candidate:
+        # Ignore if this candidate is part of a standard date pattern e.g. 03-08-2019
+        if re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", text):
+            # Verify candidate isn't just the MM/YYYY slice of the date
+            date_match = re.search(r"\b(\d{2})[-/\.](\d{2})[-/\.](\d{4})\b", text)
+            if date_match and candidate.strip().replace(" ", "") in (f"{date_match.group(2)}/{date_match.group(3)}", f"{date_match.group(1)}/{date_match.group(3)}"):
+                return None
         parts = re.split(r"[\/\s]+", candidate.strip())
         if len(parts) >= 2:
             return f"{parts[0]}/{parts[1]}"
@@ -685,16 +692,17 @@ def extract_document_number_from_top_lines(lines: list[OCRLine], image_height: i
     if not top_lines:
         return None
 
-    candidates: list[str] = []
     for line in sorted(top_lines, key=lambda item: (item.y_center, item.x_min)):
         cleaned = clean_ocr_noise(line.text)
-        candidates.append(cleaned)
+        # Skip date lines so 03-08-2019 is never parsed as a document number
+        if "DATE" in cleaned or re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", cleaned):
+            continue
 
         direct = extract_document_number(cleaned)
         if direct:
             return direct
 
-        if any(marker in cleaned for marker in ("D.NO", "D NO", "NO:", "NO.")):
+        if any(marker in cleaned for marker in ("D.NO", "D NO", "DOC NO", "DOCUMENT NO", "REG NO")):
             digits = re.findall(r"\d{2,6}", cleaned)
             if len(digits) >= 2:
                 year = digits[-1]
@@ -702,19 +710,6 @@ def extract_document_number_from_top_lines(lines: list[OCRLine], image_height: i
                 if len(year) == 4 and len(number) <= 6:
                     return f"{number}/{year}"
 
-        loose = re.search(r"[:\s]([0-9]{2,6})\s+([0-9]{4})\b", cleaned)
-        if loose:
-            return f"{loose.group(1)}/{loose.group(2)}"
-
-    merged = clean_ocr_noise(" ".join(candidates))
-    digits = re.findall(r"\d{2,6}", merged)
-    if len(digits) >= 2:
-        year = next((item for item in reversed(digits) if len(item) == 4), None)
-        if year:
-            year_index = digits.index(year)
-            if year_index > 0:
-                number = digits[year_index - 1]
-                return f"{number}/{year}"
     return None
 
 
@@ -722,10 +717,11 @@ def extract_serial_number(text: str) -> str | None:
     candidate = extract_pattern(
         text,
         [
+            r"\bS\.?\s*I\.?\s*(?:NO\.?|NUMBER)?[\.\s\-:]*([0-9]{1,10})\b",
+            r"\bS\.?\s*L\.?\s*(?:NO\.?|NUMBER)?[\.\s\-:]*([0-9]{1,10})\b",
             r"\bS\.?\s*C\.?\s*NO\.?\s*[:\-]?\s*([A-Z]?\s*\d{3,10})\b",
             r"\bSERIAL\s*(?:NO\.?|NUMBER)?\s*[:\-]?\s*([A-Z]?\s*\d{3,10})\b",
             r"\bSC\s*NO\.?\s*[:\-]?\s*([A-Z]?\s*\d{3,10})\b",
-            r"\bS[IL]['\s]*NO\.?\s*[:\-]?\s*([0-9]{1,6})",
         ],
     )
     if candidate:
@@ -877,6 +873,91 @@ def run_paddle_ocr(image_path: str) -> tuple[list[OCRLine], str, dict[str, float
     return _run_paddle_ocr_impl(image_path)
 
 
+def extract_survey_information(text: str) -> tuple[str | None, str | None, str | None, str | None]:
+    """
+    Extracts survey_number, sub_survey_number, khata_number, patta_number from document text.
+    Handles CSNO, C.S.No, City Survey No, Survey No, Sy.No, etc.
+    """
+    survey_number = None
+    sub_survey_number = None
+    khata_number = None
+    patta_number = None
+
+    survey_match = re.search(
+        r"\b(?:CSNO|C\.?S\.?\s*NO|CITY\s*SURVEY\s*(?:NO|NUMBER)?|SURVEY\s*(?:NO|NUMBER)?|SY\.?\s*NO)\.?\s*[:\-]?\s*([0-9A-Z\.\(\)/\-]+)",
+        text,
+        flags=re.IGNORECASE
+    )
+    if survey_match:
+        raw_sy = survey_match.group(1).strip(" .,;-")
+        paren_match = re.search(r"([0-9A-Z]+)\(([0-9A-Z/]+)\)?", raw_sy)
+        if paren_match:
+            survey_number = raw_sy
+            sub_survey_number = paren_match.group(2)
+        else:
+            survey_number = raw_sy
+
+    khata_match = re.search(r"\bKHATA\s*(?:NO|NUMBER)?\.?\s*[:\-]?\s*([0-9A-Z/-]+)", text, flags=re.IGNORECASE)
+    if khata_match:
+        khata_number = khata_match.group(1).strip(" .,;-")
+
+    patta_match = re.search(r"\bPATTA\s*(?:NO|NUMBER)?\.?\s*[:\-]?\s*([0-9A-Z/-]+)", text, flags=re.IGNORECASE)
+    if patta_match:
+        patta_number = patta_match.group(1).strip(" .,;-")
+
+    return survey_number, sub_survey_number, khata_number, patta_number
+
+
+def extract_property_location(full_text: str, parties: list[dict[str, Any]]) -> tuple[str | None, str | None, str | None]:
+    """
+    Extracts property location details (village, mandal/taluk, district).
+    Prioritizes explicit document location text and falls back to party address context.
+    """
+    village = None
+    mandal = None
+    district = None
+
+    v_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+(?:VILLAGE|VILL\.?)\b", full_text, flags=re.IGNORECASE)
+    if v_match:
+        v_cand = clean_field(v_match.group(1))
+        if v_cand and v_cand.upper() not in ("THIS", "SAME"):
+            village = v_cand
+
+    m_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+(?:MANDAL|TALUK|TALUKA|TEHSIL|HOBLI)\b", full_text, flags=re.IGNORECASE)
+    if m_match:
+        m_cand = clean_field(m_match.group(1))
+        if m_cand:
+            mandal = m_cand
+
+    d_match = re.search(r"\b(?:DIST\.?|DISTRICT)\s*[:\-]?\s*([A-Z][A-Za-z\s\.]{2,30}?)\b", full_text, flags=re.IGNORECASE)
+    if not d_match:
+        d_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+(?:DIST\.?|DISTRICT)\b", full_text, flags=re.IGNORECASE)
+    if d_match:
+        d_cand = clean_field(d_match.group(1))
+        if d_cand:
+            district = d_cand
+
+    if parties:
+        for p in parties:
+            addr = p.get("address") or ""
+            if not village:
+                pv_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+Village\b", addr, flags=re.IGNORECASE)
+                if pv_match:
+                    village = clean_field(pv_match.group(1))
+            if not mandal:
+                pm_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+(?:Mandal|Taluk|Taluka|Tehsil|Hobli)\b", addr, flags=re.IGNORECASE)
+                if pm_match:
+                    mandal = clean_field(pm_match.group(1))
+            if not district:
+                pd_match = re.search(r"\b(?:Dist\.?|District)\.?\s*([A-Z][A-Za-z\s\.]{2,30}?)(?:,|$)", addr, flags=re.IGNORECASE)
+                if not pd_match:
+                    pd_match = re.search(r"\b([A-Z][A-Za-z\s\.]{2,30}?)\s+(?:Dist\.?|District)\b", addr, flags=re.IGNORECASE)
+                if pd_match:
+                    district = clean_field(pd_match.group(1))
+
+    return village, mandal, district
+
+
 def extract_land_document_from_lines(
     lines: list[OCRLine],
     raw_text: str,
@@ -932,6 +1013,11 @@ def extract_land_document_from_lines(
     pipeline_timings["stamp_vendor_extraction_ms"] = (perf_counter() - t0) * 1000
 
     t0 = perf_counter()
+    survey_no, sub_survey_no, khata_no, patta_no = extract_survey_information(full_text)
+    village_val, mandal_val, district_val = extract_property_location(full_text, parties)
+    if not serial_number and stamp_metadata.get("si_number"):
+        serial_number = stamp_metadata["si_number"]
+
     output = {
         "document_type": document_type,
         "document_category": document_category,
@@ -944,15 +1030,15 @@ def extract_land_document_from_lines(
         "execution_date": execution_date,
         "parties": parties,
         "property": {
-            "survey_number": None,
-            "sub_survey_number": None,
-            "khata_number": None,
-            "patta_number": None,
+            "survey_number": survey_no,
+            "sub_survey_number": sub_survey_no,
+            "khata_number": khata_no,
+            "patta_number": patta_no,
             "area": None,
             "boundaries": None,
-            "village": None,
-            "mandal": None,
-            "district": None,
+            "village": village_val,
+            "mandal": mandal_val,
+            "district": district_val,
             "status": property_status,
         },
         "stamp_information": {

@@ -16,3 +16,8 @@ land_document_output.json
 *debug.png
 *thresh.png
 *crop*.png
+
+# Verification Runtime Data
+verification_keys/
+verification_db.json
+
