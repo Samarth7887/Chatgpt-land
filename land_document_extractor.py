@@ -875,20 +875,26 @@ def _extract_stamp_metadata(lines: list[OCRLine], full_text: str) -> dict[str, A
 
     source_text = normalize_space(full_text)
 
+    # Search per-line to avoid cross-line contamination
+    stamp_lines = [line.text for line in lines if any(
+        w in line.text.upper() for w in ("SI NO", "SI N", "ACV", "ACK", "SCANNED", "STAMP VENDOR", "LNO", "SOLD TO")
+    )]
+    stamp_search_text = normalize_space(" ".join(stamp_lines).upper()) if stamp_lines else source_text
+
     ack = extract_pattern(
-        source_text,
+        stamp_search_text,
         [
-            r"\bAC[KV]\.?\s*(?:NO\.?)?[:\s\-\.]*([0-9]{2,10})\b",
-            r"\bACK\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{2,10})\b",
+            r"\bAC[KV]\.?\s*(?:NO\.?)?[:\s\-\.]*([0-9]{2,10})(?=\s|$)",
+            r"\bACK\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{2,10})(?=\s|$)",
         ],
     )
-    si = extract_pattern(
-        source_text,
-        [
-            r"\bS\.?\s*I\.?\s*(?:NO\.?)?[\.\s\-:]*([0-9]{1,6})\b",
-            r"\bSI\s*(?:NO\.?)?[:\s\-\.]*([0-9]{1,6})\b",
-        ],
+    # SI number: strict - only match digits immediately after keyword, stop at non-digit
+    si_match = re.search(
+        r"\bS\.?\s*I\.?\s*(?:NO\.?)?\.{0,5}\s*([0-9]{1,6})(?=\s|$|[^0-9])",
+        stamp_search_text,
+        re.IGNORECASE,
     )
+    si = si_match.group(1) if si_match else None
     cash = extract_pattern(source_text, [r"\bCASH\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{1,10})\b"])
     sold_to = extract_pattern(
         source_text,
@@ -909,7 +915,8 @@ def _extract_stamp_metadata(lines: list[OCRLine], full_text: str) -> dict[str, A
     has_phone = re.search(r"\b(?:Cell|Phone|Mobile)\b", header_part, re.IGNORECASE) is not None
 
     metadata["acknowledgement_number"] = smart_number(ack)
-    metadata["si_number"] = re.sub(r"\D", "", si) if si else None
+    # si_number: already pure digits from direct group capture, no stripping needed
+    metadata["si_number"] = normalize_space(si) if si else None
     metadata["cash_number"] = smart_number(cash)
     metadata["sold_to"] = clean_field(sold_to)
     metadata["sold_to_relation"] = format_relation(sold_to_relation)
@@ -1033,10 +1040,12 @@ def extract_land_document_from_lines(
     document_category = infer_document_category(document_type)
     state = infer_state(full_text)
     document_number = extract_document_number_from_top_lines(lines, image.shape[0]) or extract_document_number(full_text)
-    serial_number = extract_serial_number(full_text)
+    # serial_number: search raw_text lines to avoid cross-line contamination in flattened full_text
+    serial_number = extract_serial_number(full_text) or extract_serial_number(raw_text)
     stamp_number = extract_stamp_number(full_text)
     stamp_value = extract_stamp_value(full_text)
-    document_date = extract_document_date(full_text)
+    # document_date: search raw_text per-line so dates are isolated
+    document_date = extract_document_date(raw_text) or extract_document_date(full_text)
     execution_date = parse_execution_date(full_text)
     stamp_metadata = _extract_stamp_metadata(lines, full_text)
     pipeline_timings["field_extraction_ms"] = (perf_counter() - t0) * 1000
