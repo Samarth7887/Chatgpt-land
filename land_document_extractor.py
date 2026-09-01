@@ -290,34 +290,40 @@ def extract_stamp_number_from_text(text: str) -> str | None:
 
 
 def extract_document_number_from_text(text: str) -> str | None:
-    # Strictly require document prefix so dates (e.g. 03-08-2019) do not match as document numbers
+    # 1. Check for explicit document number patterns
     pattern = re.compile(
-        r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
+        r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?|SL)?\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
         re.IGNORECASE
     )
     match = pattern.search(text)
     if match:
         num, year = match.groups()
-        return f"{num}/{year}"
+        if len(year) == 2:
+            year = f"20{year}"
+        # Skip if match is part of a date (e.g. 03-08-2019)
+        if not re.search(rf"\b\d{{1,2}}[-/\.]{re.escape(num)}[-/\.]{re.escape(year)}\b", text):
+            return f"{num}/{year}"
 
     candidate = extract_pattern(
         text,
         [
-            r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?)\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
-            r"\bD\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
-            r"\bD\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s+[0-9]{2,4})",
+            r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?|SL|D)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
+            r"\bNO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
+            r"\b([0-9]{1,6}\s*/\s*[0-9]{2,4})\b",
         ],
     )
     if candidate:
         # Ignore if this candidate is part of a standard date pattern e.g. 03-08-2019
         if re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", text):
-            # Verify candidate isn't just the MM/YYYY slice of the date
             date_match = re.search(r"\b(\d{2})[-/\.](\d{2})[-/\.](\d{4})\b", text)
             if date_match and candidate.strip().replace(" ", "") in (f"{date_match.group(2)}/{date_match.group(3)}", f"{date_match.group(1)}/{date_match.group(3)}"):
                 return None
         parts = re.split(r"[\/\s]+", candidate.strip())
         if len(parts) >= 2:
-            return f"{parts[0]}/{parts[1]}"
+            yr = parts[1]
+            if len(yr) == 2:
+                yr = f"20{yr}"
+            return f"{parts[0]}/{yr}"
         return smart_number(candidate)
     return None
 
@@ -692,23 +698,35 @@ def extract_document_number_from_top_lines(lines: list[OCRLine], image_height: i
     if not top_lines:
         return None
 
+    non_date_lines: list[str] = []
     for line in sorted(top_lines, key=lambda item: (item.y_center, item.x_min)):
         cleaned = clean_ocr_noise(line.text)
-        # Skip date lines so 03-08-2019 is never parsed as a document number
         if "DATE" in cleaned or re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", cleaned):
             continue
+        non_date_lines.append(cleaned)
 
         direct = extract_document_number(cleaned)
         if direct:
             return direct
 
-        if any(marker in cleaned for marker in ("D.NO", "D NO", "DOC NO", "DOCUMENT NO", "REG NO")):
-            digits = re.findall(r"\d{2,6}", cleaned)
+        if any(marker in cleaned for marker in ("D.NO", "D NO", "DOC NO", "DOCUMENT NO", "REG NO", "NO.", "NO:", "NUMBER")):
+            digits = re.findall(r"\d{1,6}", cleaned)
             if len(digits) >= 2:
                 year = digits[-1]
                 number = digits[-2]
-                if len(year) == 4 and len(number) <= 6:
+                if len(year) in (2, 4) and len(number) <= 6:
+                    if len(year) == 2:
+                        year = f"20{year}"
                     return f"{number}/{year}"
+
+    if non_date_lines:
+        merged = " ".join(non_date_lines)
+        match = re.search(r"\b([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b", merged)
+        if match:
+            num, yr = match.groups()
+            if len(yr) == 2:
+                yr = f"20{yr}"
+            return f"{num}/{yr}"
 
     return None
 
