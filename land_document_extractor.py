@@ -290,22 +290,26 @@ def extract_stamp_number_from_text(text: str) -> str | None:
 
 
 def extract_document_number_from_text(text: str) -> str | None:
+    # Filter out vendor license lines so LNo. 21-11-035/2000 is never extracted as a document number
+    clean_lines = [l for l in text.splitlines() if not any(w in l.upper() for w in ("LNO", "LICENSED", "STAMP VENDOR", "R.LNO", "RLNO", "L.NO", "LNO."))]
+    search_text = "\n".join(clean_lines)
+
     # 1. Check for explicit document number patterns
     pattern = re.compile(
         r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?|SL)?\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
         re.IGNORECASE
     )
-    match = pattern.search(text)
+    match = pattern.search(search_text)
     if match:
         num, year = match.groups()
         if len(year) == 2:
             year = f"20{year}"
         # Skip if match is part of a date (e.g. 03-08-2019)
-        if not re.search(rf"\b\d{{1,2}}[-/\.]{re.escape(num)}[-/\.]{re.escape(year)}\b", text):
+        if not re.search(rf"\b\d{{1,2}}[-/\.]{re.escape(num)}[-/\.]{re.escape(year)}\b", search_text):
             return f"{num}/{year}"
 
     candidate = extract_pattern(
-        text,
+        search_text,
         [
             r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?|SL|D)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
             r"\bNO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
@@ -314,8 +318,8 @@ def extract_document_number_from_text(text: str) -> str | None:
     )
     if candidate:
         # Ignore if this candidate is part of a standard date pattern e.g. 03-08-2019
-        if re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", text):
-            date_match = re.search(r"\b(\d{2})[-/\.](\d{2})[-/\.](\d{4})\b", text)
+        if re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", search_text):
+            date_match = re.search(r"\b(\d{2})[-/\.](\d{2})[-/\.](\d{4})\b", search_text)
             if date_match and candidate.strip().replace(" ", "") in (f"{date_match.group(2)}/{date_match.group(3)}", f"{date_match.group(1)}/{date_match.group(3)}"):
                 return None
         parts = re.split(r"[\/\s]+", candidate.strip())
@@ -700,10 +704,19 @@ def extract_document_number_from_top_lines(lines: list[OCRLine], image_height: i
 
     non_date_lines: list[str] = []
     for line in sorted(top_lines, key=lambda item: (item.y_center, item.x_min)):
-        cleaned = clean_ocr_noise(line.text)
-        if "DATE" in cleaned or re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", cleaned):
+        raw_t = line.text or ""
+        # 1. Skip date lines and vendor license lines so LNo. 21-11-035/2000 is never taken as doc number
+        if "DATE" in raw_t.upper() or re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", raw_t) or any(w in raw_t.upper() for w in ("LNO", "LICENSED", "STAMP VENDOR", "R.LNO", "RLNO", "L.NO", "LNO.")):
             continue
+
+        cleaned = clean_ocr_noise(raw_t)
         non_date_lines.append(cleaned)
+
+        # 2. Check for combined 8-digit or slash pattern e.g. 19932019 -> 1993/2019 or 1993 2019
+        comb_match = re.search(r"([0-9]{2,5})\s*[\/\s]?\s*(20[0-9]{2})\b", raw_t)
+        if comb_match:
+            n, y = comb_match.groups()
+            return f"{n}/{y}"
 
         direct = extract_document_number(cleaned)
         if direct:
@@ -721,6 +734,11 @@ def extract_document_number_from_top_lines(lines: list[OCRLine], image_height: i
 
     if non_date_lines:
         merged = " ".join(non_date_lines)
+        comb_match = re.search(r"([0-9]{2,5})\s*[\/\s]?\s*(20[0-9]{2})\b", merged)
+        if comb_match:
+            n, y = comb_match.groups()
+            return f"{n}/{y}"
+
         match = re.search(r"\b([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b", merged)
         if match:
             num, yr = match.groups()
@@ -751,6 +769,11 @@ def extract_document_date(text: str) -> str | None:
     explicit = _date_from_labeled_text(text, ("DT", "DATE"))
     if explicit:
         return explicit
+    match = re.search(r"\b(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})\b", text)
+    if match:
+        day, month, year = match.groups()
+        if 1 <= int(day) <= 31 and 1 <= int(month) <= 12:
+            return f"{int(day):02d}-{int(month):02d}-{year}"
     return None
 
 
@@ -852,8 +875,20 @@ def _extract_stamp_metadata(lines: list[OCRLine], full_text: str) -> dict[str, A
 
     source_text = normalize_space(full_text)
 
-    ack = extract_pattern(source_text, [r"\bACK\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{2,10})\b"])
-    si = extract_pattern(source_text, [r"\bSI\s*(?:NO\.?)?[:\s\-\.]*([0-9][0-9\.\-\s]{0,10})"])
+    ack = extract_pattern(
+        source_text,
+        [
+            r"\bAC[KV]\.?\s*(?:NO\.?)?[:\s\-\.]*([0-9]{2,10})\b",
+            r"\bACK\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{2,10})\b",
+        ],
+    )
+    si = extract_pattern(
+        source_text,
+        [
+            r"\bS\.?\s*I\.?\s*(?:NO\.?)?[\.\s\-:]*([0-9]{1,6})\b",
+            r"\bSI\s*(?:NO\.?)?[:\s\-\.]*([0-9]{1,6})\b",
+        ],
+    )
     cash = extract_pattern(source_text, [r"\bCASH\.?\s*(?:NO\.?)?[:\s\-]*([0-9]{1,10})\b"])
     sold_to = extract_pattern(
         source_text,
@@ -997,7 +1032,7 @@ def extract_land_document_from_lines(
     document_type = infer_document_type(full_text)
     document_category = infer_document_category(document_type)
     state = infer_state(full_text)
-    document_number = extract_document_number(full_text) or extract_document_number_from_top_lines(lines, image.shape[0])
+    document_number = extract_document_number_from_top_lines(lines, image.shape[0]) or extract_document_number(full_text)
     serial_number = extract_serial_number(full_text)
     stamp_number = extract_stamp_number(full_text)
     stamp_value = extract_stamp_value(full_text)
