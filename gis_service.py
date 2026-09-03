@@ -59,21 +59,54 @@ def _clean_spatial_name(val: Any, name_type: str = "village") -> str:
         return ""
     if name_type == "village":
         norm = re.sub(r"^(?:property\s+situated\s+at|situated\s+at|located\s+at|at)\s+", "", norm)
+        norm = re.sub(r"^(?:ii|i|iii|iv|v)[\s_\-\.,]*", "", norm)
+        if norm.startswith("ii") and len(norm) > 4:
+            norm = norm[2:]
+        elif norm.startswith("i") and len(norm) > 4 and norm.startswith(("iaushapur", "iankushapur")):
+            norm = norm[1:]
         norm = re.sub(r"\s+village$", "", norm)
     elif name_type in ("district", "mandal", "taluk"):
         norm = re.sub(r"\s+(?:district|mandal|taluk|taluka|tehsil)$", "", norm)
     return norm.strip()
 
 
-def normalize_state(state_raw: Any) -> Optional[str]:
-    """Normalizes state names safely to supported dataset keys."""
-    if not state_raw:
-        return "KARNATAKA"  # Default primary state if unparsed
-    norm = _norm_text(state_raw)
-    if "karnataka" in norm:
-        return "KARNATAKA"
-    elif "telangana" in norm:
+def normalize_state(
+    state_raw: Any,
+    district_raw: Any = None,
+    mandal_raw: Any = None,
+    village_raw: Any = None,
+) -> Optional[str]:
+    """Normalizes state names safely to supported dataset keys with contextual fallback."""
+    norm_state = _norm_text(state_raw)
+    if "telangana" in norm_state:
         return "TELANGANA"
+    if "andhra" in norm_state or norm_state in ("ap", "a p"):
+        return "TELANGANA"
+    if "karnataka" in norm_state:
+        return "KARNATAKA"
+
+    # Contextual inference from district / mandal / village if state is unprovided or unknown
+    combined = f"{_norm_text(district_raw)} {_norm_text(mandal_raw)} {_norm_text(village_raw)}"
+
+    telangana_anchors = (
+        "ranga", "rangareddy", "r r", "rr", "medchal", "malkajgiri", "hyderabad",
+        "ghatkesar", "quthbullapur", "keesara", "aushapur", "uppal", "shamshabad",
+        "rajendranagar", "serilingampally", "sangareddy", "vikarabad", "secunderabad",
+        "warangal", "khammam", "karimnagar", "nizamabad", "mahbubnagar", "nalgonda"
+    )
+    if any(anchor in combined for anchor in telangana_anchors):
+        return "TELANGANA"
+
+    karnataka_anchors = (
+        "bangalore", "bengaluru", "mandya", "mysore", "mysuru", "tumkur", "tumakuru",
+        "kolar", "hassan", "chikkaballapur", "ramnagara", "ramanagara", "bellary",
+        "ballari", "belgaum", "belagavi", "dharwad", "hubli", "shimoga", "shivamogga"
+    )
+    if any(anchor in combined for anchor in karnataka_anchors):
+        return "KARNATAKA"
+
+    if not state_raw:
+        return "KARNATAKA"
     return None
 
 
@@ -254,8 +287,7 @@ def verify_gis_location(ocr_json: Dict[str, Any]) -> Dict[str, Any]:
         _clean_str(ocr_json.get("state")) or
         _clean_str(ocr_json.get("state_name")) or
         _clean_str(prop.get("state")) or
-        _clean_str(prop.get("state_name")) or
-        "Karnataka"
+        _clean_str(prop.get("state_name"))
     )
     district_raw = (
         _clean_str(prop.get("district")) or
@@ -288,7 +320,7 @@ def verify_gis_location(ocr_json: Dict[str, Any]) -> Dict[str, Any]:
         _clean_str(ocr_json.get("dimensions"))
     )
 
-    state_key = normalize_state(state_raw)
+    state_key = normalize_state(state_raw, district_raw, mandal_raw, village_raw)
     if not state_key:
         return {
             "status": "UNSUPPORTED_STATE",
@@ -336,20 +368,26 @@ def verify_gis_location(ocr_json: Dict[str, Any]) -> Dict[str, Any]:
         # Fallback search if exact norm_vill not found in index keys
         if not raw_candidates:
             for vk, vf_list in state_idx.items():
-                if norm_vill in vk or vk in norm_vill:
+                if norm_vill in vk or vk in norm_vill or (len(norm_vill) > 4 and norm_vill.endswith(vk)):
                     raw_candidates.extend(vf_list)
 
         candidates = []
         for vf in raw_candidates:
             v_props = vf.get("properties", {})
             v_mandal = _clean_spatial_name(v_props.get("mandal") or v_props.get("taluk") or v_props.get("old_mandal"), "mandal")
-            v_dist = _clean_spatial_name(v_props.get("district") or v_props.get("old_dist"), "district")
+            v_dist = _clean_spatial_name(v_props.get("district"), "district")
+            v_old_dist = _clean_spatial_name(v_props.get("old_dist"), "district")
 
             # Hierarchical filtering
             if norm_mandal and v_mandal and norm_mandal not in v_mandal and v_mandal not in norm_mandal:
                 continue
-            if norm_dist and v_dist and norm_dist not in v_dist and v_dist not in norm_dist:
-                continue
+            if norm_dist:
+                d_matches = any(
+                    (d and (norm_dist in d or d in norm_dist or ("ranga" in norm_dist and "ranga" in d) or ("rr" in norm_dist and "ranga" in d)))
+                    for d in (v_dist, v_old_dist)
+                )
+                if not d_matches:
+                    continue
             candidates.append(vf)
 
         if len(candidates) == 1:

@@ -222,40 +222,45 @@ def extract_survey_number_candidates(lines) -> list[FieldCandidate]:
 
         # Check if this page is a Registration Plan or Schedule of Property
         is_plan = "REGISTRATIONPLAN" in pg_clean or "LOCATIONPLAN" in pg_clean or "PLANSHOWING" in pg_clean or ("PLAN" in pg_clean and ("PLOT" in pg_clean or "SY.NOS" in pg_clean or "SYNO" in pg_clean))
-        is_schedule = "SCHEDULEOFTHEPROPERTY" in pg_clean or "SCHEDULEPROPERTY" in pg_clean or ("SCHEDULE" in pg_clean and "PROPERTY" in pg_clean)
+        is_schedule = "SCHEDULEOFTHEPROPERTY" in pg_clean or "SCHEDULEPROPERTY" in pg_clean or ("SCHEDULE" in pg_clean and "PROPERTY" in pg_clean) or "PBOPEBIY" in pg_clean
 
         # 1. Search under Registration Plan header or Schedule of Property specifically
         if is_plan or is_schedule:
             sched_body = pg_text
             if is_schedule:
-                m_sched = re.search(r"S[\s._]*C[\s._]*H[\s._]*E[\s._]*D[\s._]*U[\s._]*L[\s._]*E[^\n]*P[\s._]*R[\s._]*O[\s._]*P[\s._]*E[\s._]*R[\s._]*T[\s._]*Y\s*(.+?)(?:BOUNDED\s+BY|NORTH\s*::|IN\s+WITNESS|$)", pg_text, re.DOTALL | re.IGNORECASE)
+                m_sched = re.search(r"S[\s._]*C[\s._]*H[\s._]*E[\s._]*D[\s._]*U[\s._]*L[\s._]*E[^\n]*(?:P[\s._]*R[\s._]*O[\s._]*P[\s._]*E[\s._]*R[\s._]*T[\s._]*Y|PBOPEBIY)\s*(.+?)(?:BOUNDED\s+BY|NORTH\s*::|IN\s+WITNESS|$)", pg_text, re.DOTALL | re.IGNORECASE)
                 if not m_sched:
                     m_sched = re.search(r"SCHEDULE[^\n]*PROPERTY\s*(.+?)(?:BOUNDED\s+BY|NORTH\s*::|IN\s+WITNESS|$)", pg_text, re.DOTALL | re.IGNORECASE)
                 sched_body = m_sched.group(1) if m_sched else pg_text
 
-            # Match multi-number survey lists e.g. "Survey Nos. 278, 281 & 282" or "Sy. Nos. 356, 357 AND 358"
-            for m_sy in re.finditer(r"(?:SY\.?|SURVEY)\s*(?:NOS?|NUMBERS?)?\.?\s*[:\-]?\s*([0-9\s,&/\+ANDand-]+)", sched_body, re.IGNORECASE):
-                nums = re.findall(r"\b\d{2,4}\b", m_sy.group(1))
-                valid_nums = [n for n in nums if n not in ("2003", "2024", "1023", "1056", "480", "486", "401", "1046")]
+            for m_sy in re.finditer(
+                r"(?:\b(?:SURVEY|SY|S\s*\.?\s*Y|S\s*\.?\s*NO|C\s*\.?\s*S\s*\.?\s*NO)[\s._-]*(?:NOS?|NUMBERS?|NO\.?)?[\s.:-]*([0-9][0-9\s,&/\+ANDand.-]*))",
+                sched_body, re.IGNORECASE
+            ):
+                raw = re.sub(r"\bAND\b", ",", m_sy.group(1), flags=re.IGNORECASE)
+                raw = re.sub(r"&", ",", raw)
+                nums = re.findall(r"\b\d{2,4}\b", raw)
+                valid_nums = [n for n in nums if n not in ("2003", "2002", "2004", "2024", "2025", "1023", "1056", "480", "486", "401", "1046", "1048", "100")]
                 if valid_nums:
                     val_str = ", ".join(sorted(set(valid_nums), key=lambda x: int(x)))
                     score = 1.0 if len(valid_nums) >= 2 else 0.95
                     candidates.append(FieldCandidate(
                         value=val_str,
                         page=pg,
-                        context=m_sy.group(0),
+                        context=m_sy.group(0)[:80],
                         score=score,
                         reason=f"Authoritative survey numbers from Page {pg} {'Registration Plan' if is_plan else 'Schedule of the Property'}"
                     ))
 
         # 2. General survey number mentions across document
         for m in re.finditer(
-            r"(?:SY\.?|SURVEY)\s*(?:NOS?|NUMBERS?)?\.?\s*[:\-]?\s*([0-9\s,&/\+ANDand-]+)",
+            r"(?:\b(?:SURVEY|SY|S\s*\.?\s*Y|S\s*\.?\s*NO|C\s*\.?\s*S\s*\.?\s*NO)[\s._-]*(?:NOS?|NUMBERS?|NO\.?)?[\s.:-]*([0-9][0-9\s,&/\+ANDand.-]*))",
             pg_text, re.IGNORECASE
         ):
-            raw = m.group(1).strip(" .,;-")
+            raw = re.sub(r"\bAND\b", ",", m.group(1), flags=re.IGNORECASE)
+            raw = re.sub(r"&", ",", raw)
             nums = re.findall(r"\b\d{2,4}\b", raw)
-            valid_nums = [n for n in nums if n not in ("2003", "2024", "1023", "1056", "480", "486", "401", "1046")]
+            valid_nums = [n for n in nums if n not in ("2003", "2002", "2004", "2024", "2025", "1023", "1056", "480", "486", "401", "1046", "1048", "100")]
             if not valid_nums:
                 continue
 
@@ -311,42 +316,46 @@ def extract_sub_survey_candidates(lines) -> list[FieldCandidate]:
     for pg in _pages_present(lines):
         pg_text = _upper(_all_text_for_page(lines, pg))
         pg_clean = re.sub(r"[.\s]+", "", pg_text)
-        is_plan = "REGISTRATIONPLAN" in pg_clean or "LOCATIONPLAN" in pg_clean or "PLANSHOWING" in pg_clean or "PLAN" in pg_clean and ("PLOT" in pg_clean or "SY.NOS" in pg_clean)
+        is_plan = "REGISTRATIONPLAN" in pg_clean or "LOCATIONPLAN" in pg_clean or "PLANSHOWING" in pg_clean or ("PLAN" in pg_clean and ("PLOT" in pg_clean or "SY.NOS" in pg_clean))
         is_schedule = "SCHEDULEOFTHEPROPERTY" in pg_clean or "SCHEDULEPROPERTY" in pg_clean or ("SCHEDULE" in pg_clean and "PROPERTY" in pg_clean)
 
+        # 1. Regex matching PLOT / PL OT / SUB-SURVEY / SUB-DIVISION / PLOT-NOS
         for m in re.finditer(
-            r"PLOT\s*(?:NOS?|NUMBERS?|NO\.?)\.?\s*[:\-]?\s*([\d\s,/&\+ANDand-]+)",
+            r"(?:\b(?:PL[\s._-]*OT|SUB[\s._-]*(?:SURVEY|DIVISION))\s*(?:NOS?|NUMBERS?|NO\.?)?[\s.:-]*([0-9][0-9/\s,&\+ANDand.-]*))",
             pg_text, re.IGNORECASE
         ):
             raw = m.group(1).strip(" .,;-")
             raw = re.sub(r"\bAND\b", "&", raw, flags=re.IGNORECASE)
-            plot_nums = re.findall(r"\d+/\d+", raw)
+            plot_nums = re.findall(r"\b\d{2,4}/\d+\b", raw)
+            if not plot_nums:
+                plot_nums = re.findall(r"\b\d{2,4}(?:/\d+)?\b", raw)
+                plot_nums = [p for p in plot_nums if p not in ("2003", "2002", "2004", "2024", "2025", "480", "401", "278", "281", "282", "271")]
             if plot_nums:
                 value = " & ".join(plot_nums)
-                score = 1.0 if is_plan else (0.95 if is_schedule else 0.80)
+                score = 1.0 if is_plan else (0.95 if is_schedule else 0.85)
                 candidates.append(FieldCandidate(
                     value=value, page=pg,
-                    context="Registration Plan" if is_plan else ("Schedule" if is_schedule else "property description"),
+                    context=m.group(0)[:80],
                     score=score,
-                    reason=f"Plot Nos. pattern on page {pg}"
+                    reason=f"Plot / Sub-survey pattern on page {pg}"
                 ))
 
-        for m in re.finditer(
-            r"(?:MARKED\s*AS\s*)?PLOT\s*NO\.?\s*[:\-]?\s*([\d/\s&,ANDand-]+)",
-            pg_text, re.IGNORECASE
-        ):
-            raw = m.group(1).strip(" .,;-")
-            raw = re.sub(r"\bAND\b", "&", raw, flags=re.IGNORECASE)
-            plot_nums = re.findall(r"\d+/\d+", raw)
-            if plot_nums:
-                value = " & ".join(plot_nums)
-                score = 1.0 if is_plan else 0.85
-                candidates.append(FieldCandidate(
-                    value=value, page=pg,
-                    context="Registration Plan" if is_plan else "Marked as plot",
-                    score=score,
-                    reason=f"'Marked as plot No.' on page {pg}"
-                ))
+        # 2. Slashed parcel numbers in text e.g. 1023/1, 1023/2 or 1023/1 & 1023/2
+        slashed = re.findall(r"\b(\d{3,4}/\d+)\b", pg_text)
+        valid_slashed = [s for s in slashed if not s.startswith(("200", "201", "202"))]
+        if valid_slashed:
+            seen = []
+            for s in valid_slashed:
+                if s not in seen:
+                    seen.append(s)
+            val = " & ".join(seen)
+            score = 1.0 if is_plan else (0.90 if is_schedule else 0.80)
+            candidates.append(FieldCandidate(
+                value=val, page=pg,
+                context=f"Slashed sub-survey parcel numbers: {val}",
+                score=score,
+                reason=f"Direct sub-survey parcel pattern on page {pg}"
+            ))
 
     for c in candidates:
         v = c.value.strip()
@@ -563,7 +572,12 @@ def extract_village_candidates(lines) -> list[FieldCandidate]:
 
         for m in re.finditer(r"\b([A-Z][A-Za-z]{2,25})\s+VILLAGE\b", upper):
             name = m.group(1).strip()
-            if name.upper() in ("THIS", "SAME", "THE", "SAID"):
+            name = re.sub(r"^(?:II|I|III|IV|V)[\s_\-\.,]*", "", name, flags=re.IGNORECASE)
+            if name.lower().startswith("ii") and len(name) > 4:
+                name = name[2:]
+            elif name.lower().startswith("i") and len(name) > 4 and name[1:].lower().startswith(("au", "an", "am", "ap", "ar", "al")):
+                name = name[1:]
+            if name.upper() in ("THIS", "SAME", "THE", "SAID", ""):
                 continue
             candidates.append(FieldCandidate(
                 value=name.title(), page=pg,
@@ -574,7 +588,12 @@ def extract_village_candidates(lines) -> list[FieldCandidate]:
 
         for m in re.finditer(r"SITUATED\s+AT\s+([A-Z][A-Za-z]{2,25})", upper):
             name = m.group(1).strip()
-            if name.upper() not in ("THIS", "THE"):
+            name = re.sub(r"^(?:II|I|III|IV|V)[\s_\-\.,]*", "", name, flags=re.IGNORECASE)
+            if name.lower().startswith("ii") and len(name) > 4:
+                name = name[2:]
+            elif name.lower().startswith("i") and len(name) > 4 and name[1:].lower().startswith(("au", "an", "am", "ap", "ar", "al")):
+                name = name[1:]
+            if name.upper() not in ("THIS", "THE", ""):
                 candidates.append(FieldCandidate(
                     value=name.title(), page=pg,
                     context="Situated at",

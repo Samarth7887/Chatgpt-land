@@ -2336,12 +2336,31 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             from semantic_extractor import clean_user_facing_schema
             user_facing_result = clean_user_facing_schema(result)
             payload = json.dumps(user_facing_result, indent=2, ensure_ascii=False)
-            mime_type = mimetypes.guess_type(filename)[0] or "image/png"
-            image_data = base64.b64encode(uploaded).decode("ascii")
             if is_pdf_upload:
-                preview = f'<iframe src="data:application/pdf;base64,{image_data}" style="width:100%; height:460px; border-radius:10px; border:1px solid var(--border);" title="PDF Document Preview"></iframe>'
+                if 'page_buffers' not in locals() or not page_buffers:
+                    page_buffers = extract_pdf_pages_to_memory(uploaded, scale=1.6)
+                preview_pages_b64 = [base64.b64encode(pb[1]).decode("ascii") for pb in page_buffers]
+                total_pgs = len(preview_pages_b64)
+                pages_html = "\n".join(
+                    f'<div style="margin-bottom: 16px; text-align: center;">'
+                    f'<div style="font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: #94a3b8; margin-bottom: 6px; text-align: left; padding-left: 2px;">PAGE {idx} OF {total_pgs}</div>'
+                    f'<img src="data:image/jpeg;base64,{b64_str}" style="width: 100%; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); display: block;" alt="Document Page {idx}">'
+                    f'</div>'
+                    for idx, b64_str in enumerate(preview_pages_b64, start=1)
+                )
+                preview = f"""
+                <div style="max-height: 620px; overflow-y: auto; background: #2b2d30; border-radius: 10px; padding: 14px; border: 1px solid var(--border);">
+                  {pages_html}
+                </div>
+                """
             else:
-                preview = f'<img src="data:{mime_type};base64,{image_data}" alt="Uploaded image preview">'
+                mime_type = mimetypes.guess_type(filename)[0] or "image/png"
+                image_data = base64.b64encode(uploaded).decode("ascii")
+                preview = f"""
+                <div style="max-height: 540px; overflow-y: auto; text-align: center; background: #2b2d30; border-radius: 10px; padding: 12px; border: 1px solid var(--border);">
+                  <img src="data:{mime_type};base64,{image_data}" style="max-width: 100%; border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);" alt="Uploaded image preview">
+                </div>
+                """
             message = f"Processed {html.escape(filename)} successfully. Verification record created."
 
             if temp_path:
