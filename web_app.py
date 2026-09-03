@@ -167,6 +167,27 @@ def process_uploaded_file(uploaded_bytes: bytes, filename: str) -> str:
             return tmp.name
 
 
+def generate_qr_base64(text: str) -> str:
+    """Generates an embedded Base64-encoded PNG image of the QR Code."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=6,
+            border=2,
+        )
+        qr.add_data(text)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as exc:
+        print(f"QR generation error: {exc}")
+        return ""
+
+
 # HTML Template for main app and verification console
 HTML_PAGE = Template("""<!doctype html>
 <html lang="en">
@@ -1390,6 +1411,13 @@ def render_page(
                 if isinstance(p, dict):
                     parties_html += f"<li>{html.escape(p.get('name') or '')} ({html.escape(p.get('role') or '')})</li>"
 
+            verification_url = f"http://{host_name}/?verification_id={rec_id}"
+            qr_b64 = generate_qr_base64(verification_url)
+            if qr_b64:
+                qr_media_html = f'<img src="data:image/png;base64,{qr_b64}" alt="Verification QR Code" style="width: 190px; height: 190px; border-radius: 14px; border: 2px solid #cbd5e1; background: white; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); display: block; margin: 0 auto;">'
+            else:
+                qr_media_html = f'<canvas id="qrCanvas" class="qr-code-canvas"></canvas><script>setTimeout(function() {{ drawQRCode("qrCanvas", "{verification_url}"); }}, 100);</script>'
+
             console_markup = f"""
             <div style="background: #fafaf9; border: 3px double var(--accent-2); border-radius: 20px; padding: 30px; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
               <div class="cert-seal">Official Seal</div>
@@ -1417,7 +1445,7 @@ def render_page(
 
               <div class="qr-container" style="flex-direction: column; align-items: center; text-align: center; padding: 20px;">
                 <h3 style="margin-top: 0; color: var(--accent); font-size: 16px;">SCAN TO VERIFY</h3>
-                <canvas id="qrCanvas" class="qr-code-canvas"></canvas>
+                {qr_media_html}
                 <div style="margin-top: 10px;">
                   <p style="margin: 0; font-size: 14px; color: var(--muted);">Scan this QR code from a device connected to the same local network.</p>
                   <p style="margin: 6px 0 0 0; font-size: 13px; font-family: monospace; font-weight: bold; background: #e2e8f0; padding: 6px 12px; border-radius: 6px; word-break: break-all;">http://{host_name}/?verification_id={rec_id}</p>
@@ -1431,12 +1459,6 @@ def render_page(
                 <a href="/?verification_id={rec_id}" class="btn btn-secondary">Verify Again</a>
                 <a href="/" class="btn btn-primary">Process New Document</a>
               </div>
-
-              <script>
-                setTimeout(function() {{
-                  drawQRCode('qrCanvas', 'http://{host_name}/?verification_id={rec_id}');
-                }}, 100);
-              </script>
             </div>
             """
 
