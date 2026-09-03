@@ -20,4 +20,4 @@ land_document_output.json
 # Verification Runtime Data
 verification_keys/
 verification_db.json
-
+scratch/

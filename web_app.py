@@ -188,6 +188,39 @@ def generate_qr_base64(text: str) -> str:
         return ""
 
 
+PREVIEW_CACHE: dict[str, str] = {}
+PREVIEW_CACHE_DIR = Path("scratch/preview_cache")
+PREVIEW_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_preview_html(verification_id: str, html_content: str) -> None:
+    if not verification_id or not html_content:
+        return
+    PREVIEW_CACHE[verification_id] = html_content
+    try:
+        (PREVIEW_CACHE_DIR / f"{verification_id}.html").write_text(
+            html_content, encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def get_preview_html(verification_id: str) -> str:
+    if not verification_id:
+        return ""
+    if verification_id in PREVIEW_CACHE:
+        return PREVIEW_CACHE[verification_id]
+    cache_file = PREVIEW_CACHE_DIR / f"{verification_id}.html"
+    if cache_file.exists():
+        try:
+            content = cache_file.read_text(encoding="utf-8")
+            PREVIEW_CACHE[verification_id] = content
+            return content
+        except Exception:
+            pass
+    return ""
+
+
 # HTML Template for main app and verification console
 HTML_PAGE = Template("""<!doctype html>
 <html lang="en">
@@ -2103,10 +2136,14 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
 
             payload_str = json.dumps(record, indent=2, ensure_ascii=False)
             host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
+            preview_html = (
+                get_preview_html(verification_id)
+                or f"<p><strong>Active Verification Record:</strong> {verification_id}</p>"
+            )
             page = render_page(
                 payload=payload_str,
                 message=message,
-                preview=f"<p><strong>Active Verification Record:</strong> {verification_id}</p>",
+                preview=preview_html,
                 cpu_selected="",
                 gpu_selected="",
                 colab_url_value=colab_url,
@@ -2390,10 +2427,12 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     pass
 
             host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
+            full_preview_html = f"<p><strong>{html.escape(filename)}</strong></p>{preview}"
+            save_preview_html(record["verification_id"], full_preview_html)
             page = render_page(
                 payload=payload,
                 message=message,
-                preview=f"<p><strong>{html.escape(filename)}</strong></p>{preview}",
+                preview=full_preview_html,
                 cpu_selected=cpu_sel,
                 gpu_selected=gpu_sel,
                 colab_url_value=colab_url,
