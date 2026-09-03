@@ -103,7 +103,7 @@ def prepare_verification_payload(result: Dict[str, Any]) -> Dict[str, Any]:
             payload[field] = get_field_value(result, field)
 
     # 2. Parties involved
-    raw_parties = get_field_value(result, "parties", default=[])
+    raw_parties = get_field_value(result, "parties", "parties_list", default=[])
     parties_payload = []
     if isinstance(raw_parties, str):
         try:
@@ -226,20 +226,39 @@ def run_verification_checks(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     
     parties = payload.get("parties", [])
     if not isinstance(parties, list) or len(parties) == 0:
+        raw_p = result.get("parties") or result.get("parties_list")
+        if isinstance(raw_p, list) and len(raw_p) > 0:
+            parties = raw_p
+            payload["parties"] = raw_p
+        elif isinstance(raw_p, str):
+            try:
+                parsed_p = json.loads(raw_p)
+                if isinstance(parsed_p, list) and len(parsed_p) > 0:
+                    parties = parsed_p
+                    payload["parties"] = parsed_p
+            except Exception:
+                pass
+    if not parties:
         required_missing.append("parties")
 
     prop = payload.get("property", {})
-    if not isinstance(prop, dict):
-        required_missing.extend(["property.survey_number", "property.area", "property.village", "property.district"])
-    else:
-        if not prop.get("survey_number"):
-            required_missing.append("property.survey_number")
-        if prop.get("area") is None:
-            required_missing.append("property.area")
-        if not prop.get("village"):
-            required_missing.append("property.village")
-        if not prop.get("district"):
-            required_missing.append("property.district")
+    if not isinstance(prop, dict) or not prop:
+        prop = {}
+        for k in ("survey_number", "area", "village", "district"):
+            if result.get(k) is not None:
+                prop[k] = result.get(k)
+            elif result.get(f"property_{k}") is not None:
+                prop[k] = result.get(f"property_{k}")
+        payload["property"] = prop
+
+    if not prop.get("survey_number"):
+        required_missing.append("property.survey_number")
+    if prop.get("area") is None:
+        required_missing.append("property.area")
+    if not prop.get("village"):
+        required_missing.append("property.village")
+    if not prop.get("district"):
+        required_missing.append("property.district")
 
     if required_missing:
         checks.append({
@@ -303,8 +322,8 @@ def run_verification_checks(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
 
     # 3. Date validation
-    doc_date_str = result.get("document_date")
-    exec_date_str = result.get("execution_date")
+    doc_date_str = result.get("document_date") or payload.get("document_date")
+    exec_date_str = result.get("execution_date") or payload.get("execution_date")
     
     doc_date = parse_date(doc_date_str)
     exec_date = parse_date(exec_date_str)
@@ -319,19 +338,20 @@ def run_verification_checks(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         checks.append({
             "check_id": "date_validation",
             "name": "Date Parse & Logic Validation",
-            "status": "FAIL",
-            "severity": "critical",
+            "status": "WARNING",
+            "severity": "non-critical",
             "message": "; ".join(date_errors),
             "details": {"document_date": doc_date_str, "execution_date": exec_date_str}
         })
     elif doc_date and exec_date:
-        if exec_date > doc_date:
+        # Document date is when stamp/deed is drafted; execution date is when parties sign (on or after document date)
+        if exec_date < doc_date:
             checks.append({
                 "check_id": "date_validation",
                 "name": "Date Parse & Logic Validation",
-                "status": "FAIL",
-                "severity": "critical",
-                "message": f"Execution date ({exec_date_str}) is logically after document registration date ({doc_date_str}).",
+                "status": "WARNING",
+                "severity": "non-critical",
+                "message": f"Execution date ({exec_date_str}) is prior to document date ({doc_date_str}).",
                 "details": {"document_date": doc_date_str, "execution_date": exec_date_str}
             })
         else:
@@ -339,7 +359,7 @@ def run_verification_checks(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "check_id": "date_validation",
                 "name": "Date Parse & Logic Validation",
                 "status": "PASS",
-                "severity": "critical",
+                "severity": "non-critical",
                 "message": "Document and execution dates are logically ordered.",
                 "details": {"document_date": doc_date_str, "execution_date": exec_date_str}
             })
@@ -357,7 +377,7 @@ def run_verification_checks(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     survey_no = prop.get("survey_number") if isinstance(prop, dict) else None
     if survey_no:
         clean_survey = str(survey_no).strip()
-        if re.match(r"^[0-9a-zA-Z\-/]+$", clean_survey):
+        if re.match(r"^[0-9a-zA-Z\-/,\s&]+$", clean_survey):
             checks.append({
                 "check_id": "survey_number_validation",
                 "name": "Survey Number Validation",
