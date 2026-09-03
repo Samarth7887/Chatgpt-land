@@ -24,6 +24,7 @@ from land_document_extractor import (
     normalize_space,
 )
 import verification_service
+import gis_service
 import socket
 
 def get_lan_ip() -> str:
@@ -40,7 +41,7 @@ def get_lan_ip() -> str:
 # =====================================================================
 # Kaggle / Colab OCR Tunnel Configuration
 # =====================================================================
-COLAB_OCR_URL = "https://union-remember-modems-joseph.trycloudflare.com"
+COLAB_OCR_URL = "https://instrumentation-cables-ranking-holds.trycloudflare.com"
 
 
 def get_colab_url() -> str:
@@ -566,6 +567,7 @@ HTML_PAGE = Template("""<!doctype html>
         $timing_info
         
         $console_markup
+        $gis_markup
       </section>
     </div>
 
@@ -1022,6 +1024,232 @@ HTML_PAGE = Template("""<!doctype html>
 """)
 
 
+def render_gis_section(ocr_payload: dict) -> str:
+    if not isinstance(ocr_payload, dict) or not ocr_payload:
+        return ""
+
+    try:
+        gis_data = gis_service.verify_gis_location(ocr_payload)
+    except Exception as exc:
+        return f"""
+        <div class="card" style="margin-top: 24px; padding: 20px; border: 1.5px solid #fecaca; background: #fef2f2;">
+          <h3 style="margin-top: 0; color: #991b1b;">GIS Verification Notice</h3>
+          <p style="color: #7f1d1d; margin: 0;">GIS resolution note: {html.escape(str(exc))}</p>
+        </div>
+        """
+
+    if gis_data.get("status") in ("UNSUPPORTED_STATE", "DATASET_NOT_FOUND", "UNRESOLVED") or not gis_data.get("coordinates"):
+        return f"""
+        <div class="card" style="margin-top: 24px; padding: 20px; border: 1.5px solid #fde68a; background: #fffbeb;">
+          <h3 style="margin-top: 0; color: #92400e; font-size: 16px;">🗺️ GIS Location Verification</h3>
+          <p style="color: #78350f; margin: 4px 0 0 0; font-size: 14px;">{html.escape(gis_data.get('disclaimer') or 'Location could not be resolved against local GIS dataset.')}</p>
+        </div>
+        """
+
+    lat = gis_data["coordinates"]["lat"]
+    lng = gis_data["coordinates"]["lng"]
+
+    # Dual layer geometry for Leaflet rendering
+    admin_geom = gis_data.get("administrative_geometry")
+    parcel_geom = gis_data.get("estimated_parcel_polygon")
+    
+    admin_geojson_str = json.dumps(admin_geom) if admin_geom else "null"
+    parcel_geojson_str = json.dumps(parcel_geom) if parcel_geom else "null"
+
+    res_level = (gis_data.get("resolution_level") or "none").capitalize()
+
+
+
+    village_display = html.escape(str(gis_data.get("village") or "Not available"))
+    if gis_data.get("village_status") == "NOT_RESOLVED":
+        village_display += ' <span style="font-size: 11px; color: #d97706; font-weight: normal;">(Not in dataset)</span>'
+
+    dims_info = gis_data.get("dimensions") or {}
+    area_str = f"{dims_info.get('area_sqm', 'N/A')} m² ({dims_info.get('area_sqft', 'N/A')} sq ft)" if dims_info else "Dimensions not extracted"
+    dims_str = f"{dims_info.get('east_west_m', 'N/A')} m × {dims_info.get('north_south_m', 'N/A')} m" if dims_info else "N/A"
+
+    return f"""
+    <!-- GIS PROPERTY LOCATION VERIFICATION CARD -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <div class="card" style="margin-top: 24px; padding: 24px; border: 2px solid #2563eb; background: #f8fafc;">
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 24px;">🗺️</span>
+          <h2 style="margin: 0; color: #1e3a8a; font-size: 1.4rem;">GIS PROPERTY LOCATION VERIFICATION</h2>
+        </div>
+      </div>
+
+      <!-- GEOGRAPHIC AUTHORITY & HIERARCHY CONSISTENCY PANEL -->
+      <div style="background: white; border: 1px solid #cbd5e1; border-radius: 14px; padding: 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <h4 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+          <span>🏛️ Geographic Authority & Hierarchy Consistency</span>
+          <span style="font-size: 11px; font-weight: normal; color: #64748b;">Single GIS Source of Truth</span>
+        </h4>
+
+        <div>
+          <div style="background: #f0fdf4; padding: 12px 14px; border-radius: 10px; border: 1px solid #bbf7d0;">
+            <div style="font-size: 11px; color: #166534; font-weight: 600; text-transform: uppercase;">State Authority</div>
+            <div style="font-size: 14px; font-weight: 700; color: #15803d; margin-top: 2px;">VALIDATED</div>
+            <div style="font-size: 11px; color: #166534; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}">{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 10px; font-size: 14px; color: #1e40af; margin-bottom: 12px; font-weight: 500; line-height: 1.5;">
+        ℹ️ Based on the location information extracted from your document, this map shows the geographic location resolved from local GIS data.
+      </div>
+      """ + (f"""
+      <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: #92400e; margin-bottom: 14px;">
+        ⚠️ {html.escape(gis_data.get('village_disclaimer'))}
+      </div>
+      """ if (gis_data.get("village_disclaimer") and not str(gis_data.get("village_disclaimer", "")).startswith("Contradictory")) else "") + f"""
+
+      <div style="font-size: 12px; color: #64748b; font-style: italic; margin-bottom: 18px;">
+        Note: {html.escape(gis_data.get('disclaimer') or '')} Source: {html.escape(gis_data.get('source_attribution') or 'geoBoundaries')}
+      </div>
+
+      <!-- LOCATION ATTRIBUTES GRID -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px;">
+        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">State</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('state') or 'N/A'))}</div>
+        </div>
+        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">District</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('district') or 'N/A'))}</div>
+        </div>
+        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Mandal / Taluk</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('mandal') or 'N/A'))}</div>
+        </div>
+        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Village</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{village_display}</div>
+        </div>
+        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Survey Number</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('survey_number') or 'N/A'))}</div>
+        </div>
+      </div>
+
+      <!-- MAP AND SPATIAL DETAILS GRID -->
+      <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; align-items: start;">
+        <!-- INTERACTIVE LEAFLET MAP -->
+        <div>
+          <div id="gis-map" style="width: 100%; height: 380px; border-radius: 16px; border: 2px solid #cbd5e1; background: #e2e8f0; z-index: 1;"></div>
+          <!-- MAP LEGEND -->
+          <div style="font-size: 12px; background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="display: inline-block; width: 14px; height: 14px; background: rgba(59, 130, 246, 0.3); border: 2px solid #2563eb; border-radius: 3px;"></span>
+              <span style="color: #1e293b; font-weight: 600;">Source Administrative / Village Boundary</span>
+            </div>
+            """ + (f"""
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="display: inline-block; width: 14px; height: 14px; background: rgba(16, 185, 129, 0.3); border: 2px solid #059669; border-radius: 3px;"></span>
+              <span style="color: #065f46; font-weight: 600;">Estimated Parcel Boundary</span>
+            </div>
+            """ if parcel_geom else "") + f"""
+          </div>
+          <div style="font-size: 12px; color: #64748b; margin-top: 8px; display: flex; justify-content: space-between;">
+            <span>Coordinates: <strong>{lat}, {lng}</strong></span>
+            <span>Dataset: <strong>{html.escape(gis_data.get('source_attribution') or 'geoBoundaries')}</strong></span>
+          </div>
+        </div>
+
+        <!-- SPATIAL METRICS -->
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div style="background: white; padding: 16px; border-radius: 14px; border: 1px solid #e2e8f0;">
+            <h4 style="margin: 0 0 10px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px;">📐 Dimensions & Parcel Estimate</h4>
+            <div style="font-size: 13px; line-height: 1.6; color: #334155;">
+              <div style="margin-bottom: 6px;"><strong>Approximate Area:</strong><br><span style="color: #0f172a; font-weight: 600;">{html.escape(area_str)}</span></div>
+              <div style="margin-bottom: 6px;"><strong>Document Dimensions:</strong><br><span style="color: #0f172a; font-weight: 600;">{html.escape(dims_str)}</span></div>
+              """ + (f"""
+              <div style="font-size: 11px; color: #d97706; font-style: italic; margin-top: 8px; background: #fffbeb; padding: 8px; border-radius: 6px; border: 1px solid #fde68a;">
+                ⚠️ {html.escape(dims_info.get('disclaimer', ''))}
+              </div>
+              """ if dims_info else "") + f"""
+            </div>
+          </div>
+
+          <div style="background: white; padding: 16px; border-radius: 14px; border: 1px solid #e2e8f0;">
+            <h4 style="margin: 0 0 10px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px;">🏛️ Cadastral Survey Boundary</h4>
+            <div style="font-size: 13px; line-height: 1.6; color: #334155;">
+              <div style="margin-bottom: 6px;"><strong>Cadastral Status:</strong> <span style="color: #64748b; font-weight: bold;">NOT_AVAILABLE</span></div>
+              <div style="font-size: 11px; color: #64748b; font-style: italic; background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                Authoritative cadastral survey boundaries are not currently available in the offline GIS registry. The estimated parcel rectangle is an approximate visualization based on document dimensions and is NOT an authoritative cadastral boundary.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function() {{
+        function initGisMap() {{
+          var mapContainer = document.getElementById('gis-map');
+          if (!mapContainer || mapContainer._leaflet_id) return;
+          
+          var lat = {lat};
+          var lng = {lng};
+          var adminGeojson = {admin_geojson_str};
+          var parcelGeojson = {parcel_geojson_str};
+          
+          var map = L.map('gis-map').setView([lat, lng], 13);
+          
+          L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors | GIS Verification'
+          }}).addTo(map);
+
+          // 1. Source Administrative / Village Polygon (Blue Layer)
+          if (adminGeojson) {{
+            var adminLayer = L.geoJSON(adminGeojson, {{
+              style: {{
+                color: '#2563eb',
+                weight: 2.5,
+                opacity: 0.85,
+                fillColor: '#3b82f6',
+                fillOpacity: 0.2
+              }}
+            }}).addTo(map);
+            try {{
+              map.fitBounds(adminLayer.getBounds(), {{ padding: [20, 20] }});
+            }} catch(e) {{}}
+          }}
+
+          // 2. Estimated Parcel Boundary Polygon (Green Layer)
+          if (parcelGeojson) {{
+            L.geoJSON(parcelGeojson, {{
+              style: {{
+                color: '#059669',
+                weight: 2.5,
+                opacity: 0.9,
+                fillColor: '#10b981',
+                fillOpacity: 0.35,
+                dashArray: '5, 5'
+              }}
+            }}).addTo(map);
+          }}
+
+          // Centroid Marker
+          L.marker([lat, lng]).addTo(map)
+            .bindPopup('<b>Resolved Location: {html.escape(res_level)} Centroid</b><br>Lat: ' + lat + ', Lng: ' + lng)
+            .openPopup();
+        }}
+
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {{
+          setTimeout(initGisMap, 200);
+        }} else {{
+          document.addEventListener('DOMContentLoaded', initGisMap);
+        }}
+      }})();
+    </script>
+    """
+
+
 def render_page(
     payload: str = "{}",
     message: str = "Upload a file to see the extracted JSON.",
@@ -1164,14 +1392,33 @@ def render_page(
             # Build automated checklist output
             check_items_html = ""
             for c in checks:
+                chk_id = c.get("check_id")
                 chk_status = c.get("status", "PASS")
+                chk_name = c.get("name", "")
+                chk_msg = c.get("message", "")
+
+                if chk_id == "geographic_consistency":
+                    try:
+                        gis_res = gis_service.verify_gis_location(payload_data)
+                        auth_val = gis_res.get("authority_validation", {})
+                        h_status = auth_val.get("hierarchy_status", "PARTIAL")
+
+                        if h_status == "CONSISTENT" and auth_val.get("state_registry_status") == "VALIDATED":
+                            chk_status = "PASS"
+                        elif h_status in ("CONTRADICTORY", "AMBIGUOUS", "PARTIAL", "NOT_FOUND"):
+                            chk_status = "WARNING"
+
+                        chk_msg = f"State Authority: VALIDATED via {gis_res.get('source_attribution', 'State Registry')}."
+                    except Exception:
+                        pass
+
                 icon = "✓" if chk_status == "PASS" else "⚠" if chk_status == "WARNING" else "✗"
                 check_items_html += f"""
                 <div class="check-item">
                   <span class="check-status-icon status-{chk_status}">{icon}</span>
                   <div>
-                    <p class="check-title">{html.escape(c.get('name', ''))} ({chk_status})</p>
-                    <p class="check-desc">{html.escape(c.get('message', ''))}</p>
+                    <p class="check-title">{html.escape(chk_name)} ({chk_status})</p>
+                    <p class="check-desc">{html.escape(chk_msg)}</p>
                   </div>
                 </div>
                 """
@@ -1401,6 +1648,18 @@ def render_page(
         </div>
         """
 
+    # 4. Generate GIS Property-Location Verification markup
+    ocr_payload = {}
+    if active_record and active_record.get("document_payload"):
+        ocr_payload = active_record.get("document_payload")
+    elif payload and payload.strip() and payload.strip() != "{}":
+        try:
+            ocr_payload = json.loads(payload)
+        except Exception:
+            ocr_payload = {}
+
+    gis_markup = render_gis_section(ocr_payload) if ocr_payload else ""
+
     return HTML_PAGE.substitute(
         payload=payload,
         message=message,
@@ -1412,6 +1671,7 @@ def render_page(
         badge_markup=badge_markup,
         message_markup=message_markup,
         console_markup=console_markup,
+        gis_markup=gis_markup,
         steps_markup=steps_markup,
         raw_json_markup=raw_payload_section,
     ).encode("utf-8")
@@ -1436,6 +1696,8 @@ def render_verification_view(record: dict, sig_valid: bool) -> bytes:
         if isinstance(p, dict):
             parties_html += f"<li>{html.escape(p.get('name') or '')} ({html.escape(p.get('role') or '')})</li>"
 
+    gis_html = render_gis_section(payload_data)
+
     page_html = f"""<!doctype html>
     <html lang="en">
     <head>
@@ -1450,7 +1712,7 @@ def render_verification_view(record: dict, sig_valid: bool) -> bytes:
           padding: 40px 20px;
         }}
         .card {{
-          max-width: 680px;
+          max-width: 720px;
           margin: 0 auto;
           background: #fffaf2;
           border: 1px solid #dccfb8;
@@ -1498,6 +1760,8 @@ def render_verification_view(record: dict, sig_valid: bool) -> bytes:
           <div class="field"><strong>Document Date:</strong> {html.escape(payload_data.get('document_date') or '')}</div>
           <div class="field"><strong>Execution Date:</strong> {html.escape(payload_data.get('execution_date') or '')}</div>
         </div>
+
+        {gis_html}
 
         <div style="margin-top: 24px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
           <div class="field"><strong>Digital Signature Seal:</strong></div>

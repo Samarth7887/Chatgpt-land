@@ -667,7 +667,7 @@ def extract_stamp_blocks_and_serials(lines) -> tuple[list[FieldCandidate], list[
         # Explicit Serial No.
         serial_val = None
         for m_serial in re.finditer(
-            r"\b(?:SERIAL|SL\.?|S\.?|SORIM[IÌA-Z\s]?)\s*(?:NO\.?|NUMBER)?\s*[:\-]?\s*([0-9]{1,3}\s*,\s*[0-9]{3}|[0-9]{4,6})\b",
+            r"(?<!C\.)\b(?:SERIAL|SL\.?|SORIM[IÌA-Z\s]?|(?:^|[^\w.])S)\s*(?:NO\.?|NUMBER)?\s*[:\-]?\s*([0-9]{1,3}\s*,\s*[0-9]{3}|[0-9]{4,6})\b",
             upper
         ):
             s_candidate = m_serial.group(1).replace(" ", "").strip()
