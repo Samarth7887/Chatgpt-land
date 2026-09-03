@@ -32,6 +32,7 @@ from land_document_extractor import (
 )
 import verification_service
 import gis_service
+import dashboard_view
 import socket
 
 def get_lan_ip() -> str:
@@ -281,488 +282,400 @@ HTML_PAGE = Template("""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Land Document Extractor & Verification Office</title>
+  <title>MUHAR — Registry Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Archivo:wght@400;500;600;700&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --bg: #f4efe6;
-      --panel: #fffaf2;
-      --ink: #1f2937;
-      --muted: #6b7280;
-      --accent: #7c2d12;
-      --accent-2: #14532d;
-      --border: #dccfb8;
-      --shadow: 0 20px 60px rgba(31, 41, 55, 0.12);
-      --status-extracted: #3b82f6;
-      --status-needs-review: #f59e0b;
-      --status-ready: #10b981;
-      --status-approved: #047857;
-      --status-rejected: #b91c1c;
+    :root{
+      --paper:#F6F0E1; --paper-deep:#EFE6D0; --ink:#221D17; --ink-soft:#5A5142;
+      --stamp:#A6193C; --stamp-deep:#7C1030; --rosette:#C99AA8; --green:#2E6B4F;
+      --green-deep:#1C4A36; --amber:#A96A1F; --gold:#C9A227;
+      --rule:#C9BC9F; --rule-soft:#DCD2B8; --card:#FFFDF6;
+      --serif:"Fraunces",Georgia,serif;
+      --type:"Courier Prime","Courier New",monospace;
+      --sans:"Archivo",system-ui,sans-serif;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(124, 45, 18, 0.08), transparent 35%),
-        radial-gradient(circle at top right, rgba(20, 83, 45, 0.08), transparent 28%),
-        var(--bg);
-      color: var(--ink);
-      min-height: 100vh;
+    *{margin:0;padding:0;box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      background:var(--paper);color:var(--ink);font-family:var(--sans);
+      font-size:16px;line-height:1.6;overflow-x:hidden;
     }
-    .wrap {
-      max-width: 1280px;
-      margin: 0 auto;
-      padding: 40px 20px 56px;
+    ::selection{background:var(--stamp);color:var(--paper)}
+
+    /* security guilloche backdrop (from the register front page) */
+    .security-bg{
+      position:fixed;inset:0;z-index:0;pointer-events:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420' viewBox='0 0 420 420'%3E%3Cg fill='none' stroke='%23C99AA8' stroke-width='1' opacity='.33'%3E%3Ccircle cx='210' cy='210' r='196'/%3E%3Ccircle cx='210' cy='210' r='188' stroke-dasharray='3 6'/%3E%3Ccircle cx='210' cy='210' r='172'/%3E%3Ccircle cx='210' cy='210' r='164' stroke-dasharray='10 4'/%3E%3Ccircle cx='210' cy='210' r='148'/%3E%3Ccircle cx='210' cy='210' r='140' stroke-dasharray='2 5'/%3E%3Ccircle cx='210' cy='210' r='124'/%3E%3Ccircle cx='210' cy='210' r='116' stroke-dasharray='8 5'/%3E%3Ccircle cx='210' cy='210' r='100'/%3E%3Ccircle cx='210' cy='210' r='92' stroke-dasharray='4 4'/%3E%3Ccircle cx='210' cy='210' r='76'/%3E%3Ccircle cx='210' cy='210' r='68' stroke-dasharray='12 3'/%3E%3Ccircle cx='210' cy='210' r='52'/%3E%3Ccircle cx='210' cy='210' r='44'/%3E%3Ccircle cx='210' cy='210' r='36' stroke-dasharray='3 4'/%3E%3Ccircle cx='210' cy='210' r='20'/%3E%3C/g%3E%3C/svg%3E");
+      background-size:420px 420px;opacity:.5;
     }
-    .hero {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 24px;
-      align-items: stretch;
-      margin-bottom: 24px;
+    .page{position:relative;z-index:1}
+    .perf{
+      height:26px;width:100%;
+      background-image:radial-gradient(circle at 13px 13px, var(--paper) 6px, transparent 7px);
+      background-size:26px 26px;background-position:center top;
     }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
-      padding: 28px;
+    .perf.bottom{background-position:center bottom}
+
+    .wrap{max-width:1440px;margin:0 auto;padding:0 48px;width:100%;box-sizing:border-box}
+    @media(max-width:1100px){.wrap{padding:0 32px}}
+    @media(max-width:640px){.wrap{padding:0 18px}}
+
+    header{border-bottom:3px double var(--rule)}
+    .reg-bar{display:flex;align-items:center;justify-content:space-between;padding:20px 0;gap:20px}
+    .brand{display:flex;align-items:baseline;gap:12px;text-decoration:none;color:var(--ink)}
+    .brand b{font-family:var(--serif);font-weight:900;font-size:26px;letter-spacing:.04em}
+    .brand span{font-family:var(--type);font-size:11px;letter-spacing:.18em;color:var(--stamp);text-transform:uppercase}
+    nav{display:flex;gap:28px;align-items:center}
+    nav a{font-family:var(--type);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);text-decoration:none}
+    nav a:hover{color:var(--stamp)}
+    nav a:focus-visible{outline:2px solid var(--stamp);outline-offset:4px}
+    .reg-no{font-family:var(--type);font-size:11px;color:var(--ink-soft);letter-spacing:.12em;white-space:nowrap}
+    @media(max-width:820px){nav{display:none}}
+    main{min-height:70vh;padding:24px 0 60px}
+
+    /* ---------- type ---------- */
+    .eyebrow{font-family:var(--type);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--stamp);margin-bottom:24px}
+    h1{font-family:var(--serif);font-weight:560;font-size:clamp(38px,5.6vw,72px);line-height:1.05;letter-spacing:-.015em}
+    h1 em{font-style:italic;font-weight:420;color:var(--stamp)}
+    .lede{max-width:58ch;margin:22px auto 0;font-size:17.5px;color:var(--ink-soft)}
+
+    /* ---------- buttons ---------- */
+    .btn{
+      font-family:var(--type);font-size:13px;letter-spacing:.16em;text-transform:uppercase;
+      text-decoration:none;padding:15px 30px;border-radius:2px;border:0;cursor:pointer;
+      display:inline-flex;align-items:center;justify-content:center;gap:8px;
+      transition:transform .15s ease, box-shadow .15s ease, background .15s ease, color .15s ease;
     }
-    .kicker {
-      display: inline-block;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(124, 45, 18, 0.08);
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .08em;
-      text-transform: uppercase;
+    .btn:focus-visible{outline:3px solid var(--stamp);outline-offset:3px}
+    .btn-primary{background:var(--stamp);color:var(--paper);box-shadow:3px 3px 0 var(--stamp-deep)}
+    .btn-primary:hover{transform:translate(-2px,-2px);box-shadow:5px 5px 0 var(--stamp-deep)}
+    .btn-ghost{color:var(--ink);border:1.5px solid var(--ink);background:transparent}
+    .btn-ghost:hover{background:var(--ink);color:var(--paper)}
+    .btn-green{background:var(--green);color:var(--paper);box-shadow:3px 3px 0 var(--green-deep)}
+    .btn-green:hover{transform:translate(-2px,-2px);box-shadow:5px 5px 0 var(--green-deep)}
+    .btn-outline-red{color:var(--stamp);border:1.5px solid var(--stamp);background:transparent}
+    .btn-outline-red:hover{background:var(--stamp);color:var(--paper)}
+    .btn:disabled{background:var(--rule-soft);color:#8A8070;box-shadow:none;cursor:not-allowed;border:0;transform:none}
+    .btn-xl{padding:17px 36px;font-size:14px}
+    .btn-sm{padding:10px 16px;font-size:11.5px}
+
+    /* ---------- panel chrome: legal border + black tab ---------- */
+    .panel{border:1.5px solid var(--ink);background:rgba(255,255,255,.5)}
+    .panel .tab{
+      font-family:var(--type);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+      background:var(--ink);color:var(--paper);padding:10px 18px;display:flex;justify-content:space-between;gap:12px;
     }
-    h1 {
-      margin: 16px 0 10px;
-      font-size: clamp(2rem, 4vw, 3.6rem);
-      line-height: 1.02;
+    .panel .tab em{font-style:normal;color:var(--rosette)}
+    .panel .tab.t-green{background:var(--green)}
+    .panel .tab.t-green em{color:rgba(246,240,225,.75)}
+    .panel .tab.t-red{background:var(--stamp-deep)}
+    .panel .body{padding:26px}
+    @media(max-width:640px){.panel .body{padding:20px 16px}}
+
+    /* ---------- intake desk (upload stage) ---------- */
+    .desk{text-align:center;padding:72px 0 48px}
+    .scan-form{max-width:680px;margin:46px auto 0;text-align:left}
+    .field-label{display:block;font-family:var(--type);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px}
+    .dropzone{
+      border:2px dashed var(--rule);background:rgba(255,255,255,.4);padding:46px 26px;
+      text-align:center;cursor:pointer;transition:border-color .15s ease, background .15s ease;
     }
-    h2 {
-      margin-top: 0;
-      font-size: 1.8rem;
-      border-bottom: 1.5px solid var(--border);
-      padding-bottom: 8px;
+    .dropzone:hover,.dropzone:focus-visible,.dropzone.drag{border-color:var(--stamp);background:rgba(201,154,168,.14);outline:none}
+    .dropzone.has{border-style:solid;border-color:var(--green);background:rgba(46,107,79,.06)}
+    .dz-ico{width:42px;height:52px;display:block;margin:0 auto 14px;stroke:var(--ink-soft);fill:none;stroke-width:1.5}
+    .dropzone:hover .dz-ico,.dropzone.drag .dz-ico{stroke:var(--stamp)}
+    .dz-title{font-weight:600;font-size:16px}
+    .dz-title span{color:var(--stamp);text-decoration:underline;text-underline-offset:3px}
+    .dz-hint{font-family:var(--type);font-size:11.5px;color:var(--ink-soft);letter-spacing:.06em;margin-top:8px}
+    .filechip{
+      display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;
+      background:var(--paper-deep);border:1px solid var(--rule);padding:11px 14px;
+      font-family:var(--type);font-size:13px;
     }
-    p { line-height: 1.6; color: var(--muted); }
-    form {
-      display: grid;
-      gap: 14px;
+    .chip-meta{display:flex;align-items:center;gap:12px;color:var(--ink-soft)}
+    .chip-x{border:0;background:none;font-size:18px;line-height:1;cursor:pointer;color:var(--ink-soft);padding:2px 6px}
+    .chip-x:hover{color:var(--stamp)}
+    .mode-row{margin-top:20px;text-align:left}
+    select{
+      width:100%;padding:11px 12px;border:1.5px solid var(--rule);background:var(--card);
+      color:var(--ink);font-family:var(--sans);font-size:14px;border-radius:0;
     }
-    input[type=file] {
-      width: 100%;
-      padding: 18px;
-      border: 1px dashed var(--border);
-      border-radius: 16px;
-      background: #fff;
-      color: var(--muted);
+    select:focus{outline:2px solid var(--stamp);outline-offset:1px}
+    .mode-note{font-family:var(--type);font-size:11px;color:var(--ink-soft);letter-spacing:.05em;margin-top:8px}
+    .submit-row{margin-top:26px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .submit-note{font-family:var(--type);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)}
+    .next-strip{max-width:680px;margin:28px auto 0;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .next{
+      border:1px solid var(--rule);background:rgba(255,255,255,.4);padding:11px 14px;
+      font-family:var(--type);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+      color:var(--ink-soft);display:flex;gap:9px;align-items:baseline;
     }
-    .btn {
-      border: 0;
-      border-radius: 14px;
-      padding: 14px 18px;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      text-decoration: none;
+    .next b{color:var(--stamp);font-weight:400}
+    @media(max-width:640px){.next-strip{grid-template-columns:1fr}}
+
+    /* ---------- processing overlay ---------- */
+    .overlay{
+      position:fixed;inset:0;background:var(--paper);z-index:60;display:none;
+      flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;padding:24px;
     }
-    .btn-primary {
-      background: linear-gradient(135deg, var(--accent), #9a3412);
-      color: white;
+    .overlay.on{display:flex}
+    .ov-stamp{
+      font-family:var(--serif);font-weight:900;font-size:30px;letter-spacing:.08em;color:var(--stamp);
+      border:3px solid var(--stamp);padding:8px 26px;transform:rotate(-7deg);filter:url(#roughen);
     }
-    .btn-secondary {
-      background: #e2e8f0;
-      color: #1f2937;
-      border: 1px solid #cbd5e1;
+    .ov-stage{font-family:var(--serif);font-style:italic;font-size:20px;color:var(--ink)}
+    .ov-pipe{width:230px}
+    .ov-pipe .shaft{
+      width:100%;height:2px;position:relative;
+      background:repeating-linear-gradient(90deg,var(--ink) 0 9px,transparent 9px 15px);
+      animation:pipeflow 1s linear infinite;
     }
-    .btn-success {
-      background: linear-gradient(135deg, var(--accent-2), #15803d);
-      color: white;
+    .ov-pipe .shaft::after{
+      content:"";position:absolute;right:-1px;top:-6px;
+      border-left:12px solid var(--ink);border-top:7px solid transparent;border-bottom:7px solid transparent;
     }
-    .btn-danger {
-      background: linear-gradient(135deg, #dc2626, #b91c1c);
-      color: white;
+    @keyframes pipeflow{to{background-position:15px 0}}
+    .ov-note{font-family:var(--type);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+
+    /* ---------- console head ---------- */
+    .console-top{padding:60px 0 0}
+    .console-head{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+    .console-head h1{font-size:clamp(34px,4.6vw,56px)}
+    .console-head .badge{margin-left:auto}
+    .sub{font-family:var(--type);font-size:12px;color:var(--ink-soft);letter-spacing:.1em;margin-top:10px}
+    .badge{font-family:var(--type);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;padding:8px 14px;border:1.5px solid;border-radius:2px;white-space:nowrap}
+    .badge.b-fail,.badge.b-rejected{color:var(--paper);background:var(--stamp-deep);border-color:var(--stamp-deep)}
+    .badge.b-needs_review{color:var(--amber);border-color:var(--amber);background:rgba(169,106,31,.08)}
+    .badge.b-extracted{color:var(--ink-soft);border-color:var(--rule);background:rgba(255,255,255,.5)}
+    .badge.b-ready_for_approval{color:var(--green);border-color:var(--green);background:rgba(46,107,79,.08)}
+    .badge.b-approved{color:var(--paper);background:var(--green);border-color:var(--green)}
+    .stepper{display:flex;border:1.5px solid var(--ink);background:rgba(255,255,255,.45);padding:16px 20px;margin-top:28px;gap:6px}
+    .step{flex:1;position:relative;text-align:center;padding-top:2px}
+    .step .dot{
+      width:28px;height:28px;border-radius:50%;border:1.5px solid var(--rule);background:var(--card);
+      color:var(--ink-soft);font-family:var(--type);font-size:12px;
+      display:flex;align-items:center;justify-content:center;margin:0 auto;
     }
-    .btn:hover { filter: brightness(1.05); }
-    .btn:disabled {
-      background: #e2e8f0;
-      color: #94a3b8;
-      cursor: not-allowed;
-      border: 1px solid #cbd5e1;
+    .step .lbl{font-family:var(--type);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-top:8px}
+    .step.done .dot{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+    .step.done .lbl{color:var(--ink)}
+    .step.now .dot{background:var(--stamp);border-color:var(--stamp);color:var(--paper)}
+    .step.now .lbl{color:var(--stamp)}
+    .step.warn .dot{background:var(--amber);border-color:var(--amber);color:var(--paper)}
+    .step.warn .lbl{color:var(--amber)}
+    .step.bad .dot{background:var(--stamp-deep);border-color:var(--stamp-deep);color:var(--paper)}
+    .step.bad .lbl{color:var(--stamp)}
+    .step:not(:last-child)::after{content:"";position:absolute;top:15px;left:calc(50% + 22px);right:calc(-50% + 22px);border-top:1.5px dashed var(--rule)}
+    @media(max-width:760px){
+      .stepper{flex-wrap:wrap;gap:14px}
+      .step{flex:1 1 38%}
+      .step:not(:last-child)::after{display:none}
     }
-    .status-banner {
-      padding: 12px 14px;
-      border-radius: 14px;
-      background: rgba(20, 83, 45, 0.08);
-      color: var(--accent-2);
-      font-size: 14px;
-      margin-top: 14px;
+    .banner{margin-top:24px;border:1.5px solid var(--rule);background:var(--paper-deep);padding:13px 16px;display:flex;gap:12px;align-items:baseline;font-size:14px}
+    .banner .bmark{font-family:var(--serif);font-weight:700;color:var(--stamp)}
+    .banner.blocked{border-color:var(--stamp);background:rgba(166,25,60,.08);color:var(--stamp-deep);font-weight:600}
+    .docket{
+      margin-top:20px;display:flex;flex-wrap:wrap;gap:8px 28px;
+      font-family:var(--type);font-size:12px;color:var(--ink-soft);
+      border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:10px 2px;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: 0.8fr 1.2fr;
-      gap: 24px;
-      align-items: start;
+    .docket b{color:var(--stamp);font-weight:400;margin-right:6px}
+    .docket.error{color:var(--stamp-deep);border-color:rgba(166,25,60,.4)}
+
+    /* ---------- split console: left exhibit + right clerk review ---------- */
+    .console-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;margin-bottom:36px;align-items:start}
+    @media(max-width:1080px){.console-grid{grid-template-columns:1fr;gap:24px}}
+    .console-grid .exhibit-col{position:sticky;top:20px}
+    .console-grid .clerk{margin-top:0}
+    .exhibit-panel{display:flex;flex-direction:column;min-height:840px}
+    .preview-body{padding:16px;background:var(--paper-deep);flex:1;display:flex;flex-direction:column}
+    .preview-body > div{flex:1;min-height:760px;max-height:calc(100vh - 140px) !important;overflow-y:auto}
+    .preview-body img{width:100% !important;max-width:100% !important;border:1.5px solid var(--rule);background:#fff;box-shadow:0 4px 20px rgba(34,29,23,.14);display:block}
+    .checklist-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px 24px}
+    .pdf-note{padding:46px 20px;text-align:center;font-family:var(--type);font-size:12px;color:var(--ink-soft);border:1.5px dashed var(--rule)}
+    .checklist{display:flex;flex-direction:column}
+    .check{display:flex;gap:14px;padding:12px 4px;border-bottom:1px dotted var(--rule);align-items:baseline}
+    .check:last-child{border-bottom:0}
+    .check .g{font-family:var(--serif);font-weight:700;width:20px;flex:none;text-align:center}
+    .g.pass{color:var(--green)} .g.warn{color:var(--amber)} .g.fail{color:var(--stamp)}
+    .check.fail-row{background:rgba(166,25,60,.05)}
+    .check .t{font-weight:600;font-size:14px}
+    .check .t small{font-family:var(--type);font-size:10.5px;letter-spacing:.12em;color:var(--stamp);margin-left:8px;text-transform:uppercase}
+    .check .m{font-family:var(--type);font-size:12px;color:var(--ink-soft);margin-top:2px;line-height:1.5}
+    .check-sum{margin-top:14px;padding-top:14px;border-top:1.5px solid var(--ink);font-family:var(--type);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+    .check-sum .ok{color:var(--green)} .check-sum .md{color:var(--amber)} .check-sum .no{color:var(--stamp)}
+
+    /* ---------- clerk review ---------- */
+    .clerk{margin-top:26px}
+    .clerk .note{font-family:var(--type);font-size:12px;color:var(--ink-soft);margin-bottom:18px}
+    .editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+    @media(max-width:700px){.editor-grid{grid-template-columns:1fr}}
+    .efull{grid-column:1/-1}
+    .editor-field label{font-family:var(--type);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);display:block;margin-bottom:6px}
+    .editor-field input,.editor-field select,.editor-field textarea{
+      width:100%;padding:11px 12px;border:1.5px solid var(--rule);background:var(--card);
+      color:var(--ink);font-family:var(--sans);font-size:14px;border-radius:0;
     }
-    .preview, .output { padding: 24px; }
-    .preview img {
-      width: 100%;
-      border-radius: 18px;
-      border: 1px solid var(--border);
-      background: white;
+    .editor-field textarea{font-family:var(--type);font-size:12px;line-height:1.6}
+    .editor-field input:focus,.editor-field select:focus,.editor-field textarea:focus{outline:2px solid var(--stamp);outline-offset:1px}
+    .editor-field input:disabled,.editor-field select:disabled,.editor-field textarea:disabled{background:var(--paper-deep);color:var(--ink-soft);cursor:not-allowed}
+    .action-panel{margin-top:26px;border-top:1.5px solid var(--ink);padding-top:20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .warnbox{width:100%;font-family:var(--type);font-size:12px;padding:10px 14px;border:1px solid}
+    .warnbox.ok{border-color:rgba(46,107,79,.5);background:rgba(46,107,79,.08);color:var(--green)}
+    .warnbox.stop{border-color:rgba(166,25,60,.5);background:rgba(166,25,60,.08);color:var(--stamp-deep)}
+    .reject-group{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .reject-group input[type=text]{width:230px;padding:11px 12px;border:1.5px solid var(--rule);background:var(--card);font-family:var(--sans);font-size:13px;border-radius:0}
+    .reject-group input[type=text]:focus{outline:2px solid var(--stamp);outline-offset:1px}
+    @media(max-width:700px){.reject-group{margin-left:0}}
+
+    /* ---------- sealed certificate ---------- */
+    .cert{margin-top:32px}
+    .cert-body{padding:34px;display:grid;grid-template-columns:1.15fr .85fr;gap:38px}
+    @media(max-width:980px){.cert-body{grid-template-columns:1fr}}
+    .fact{display:flex;gap:14px;padding:9px 0;border-bottom:1px dotted var(--rule);font-size:14px;align-items:baseline}
+    .fact b{font-family:var(--type);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);width:168px;flex:none;font-weight:400}
+    .fact .v{font-weight:600}
+    .fact ul{margin:0;padding-left:18px}
+    .sig-state{font-family:var(--serif);font-weight:700;color:var(--green);margin:16px 0 2px;font-size:17px}
+    .sig-state.bad{color:var(--stamp)}
+    .crypto-h{font-family:var(--type);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--stamp);margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--rule)}
+    .crypto-line{font-size:13.5px;margin-bottom:8px}
+    .sigbox{
+      background:var(--paper-deep);border:1px solid var(--rule);font-family:var(--type);font-size:11px;
+      word-break:break-all;padding:10px 12px;max-height:90px;overflow:auto;line-height:1.6;margin-top:6px;
     }
-    
-    /* Verification Console Layout */
-    .console-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
-      margin-bottom: 20px;
+    .seal-side{display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
+    .seal-wrap{position:relative;width:min(240px,70vw)}
+    .big-seal{width:100%;animation:slowspin 90s linear infinite}
+    @keyframes slowspin{to{transform:rotate(360deg)}}
+    .seal-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+    .seal-center b{font-family:var(--serif);font-weight:900;font-size:26px;letter-spacing:.06em;color:var(--ink)}
+    .seal-center span{font-family:var(--type);font-size:9.5px;letter-spacing:.26em;color:var(--stamp);text-transform:uppercase;margin-top:4px}
+    .qrbox{background:#fff;border:1.5px solid var(--ink);padding:14px;box-shadow:5px 5px 0 rgba(34,29,23,.14);transform:rotate(1.4deg)}
+    .qrbox canvas{display:block}
+    .qrurl{font-family:var(--type);font-size:11px;color:var(--ink-soft);word-break:break-all;max-width:260px}
+    .qr-hint{font-size:12px;color:var(--ink-soft);max-width:260px}
+    .cert-actions{grid-column:1/-1;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;border-top:1px solid var(--rule);padding-top:22px;margin-top:4px}
+
+    /* ---------- rejected ---------- */
+    .rej{margin-top:32px;border:3px double var(--stamp-deep);background:rgba(166,25,60,.05);padding:34px;position:relative}
+    .rej-head{font-family:var(--serif);font-weight:700;font-size:clamp(24px,3.4vw,34px);color:var(--stamp-deep)}
+    .rej-stamp{
+      position:absolute;right:24px;top:20px;transform:rotate(10deg);
+      border:3px solid var(--stamp);color:var(--stamp);font-family:var(--serif);font-weight:900;
+      font-size:26px;letter-spacing:.1em;padding:5px 16px;filter:url(#roughen);
     }
-    .badge {
-      padding: 8px 16px;
-      border-radius: 999px;
-      font-weight: 700;
-      font-size: 14px;
-      text-transform: uppercase;
+    @media(max-width:640px){.rej-stamp{position:static;display:inline-block;transform:rotate(-4deg);margin-bottom:16px}}
+    .rej .reason{background:rgba(166,25,60,.08);border:1px solid rgba(166,25,60,.35);padding:14px 16px;font-size:14px;color:var(--stamp-deep);margin:20px 0}
+    .rej .quiet{font-family:var(--type);font-size:12px;color:var(--ink-soft);margin:18px 0 22px}
+
+    /* ---------- raw payload ---------- */
+    .raw{margin-top:26px;border:1.5px solid var(--ink)}
+    .raw summary{
+      cursor:pointer;list-style:none;background:var(--ink);color:var(--paper);
+      font-family:var(--type);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+      padding:10px 18px;display:flex;justify-content:space-between;gap:12px;
     }
-    .badge-extracted { background: #dbeafe; color: #1e40af; border: 1.5px solid #bfdbfe; }
-    .badge-needs_review { background: #fef3c7; color: #92400e; border: 1.5px solid #fde68a; }
-    .badge-ready_for_approval { background: #d1fae5; color: #065f46; border: 1.5px solid #a7f3d0; }
-    .badge-approved { background: #d1fae5; color: #065f46; border: 2.5px solid var(--status-approved); }
-    .badge-rejected { background: #fee2e2; color: #991b1b; border: 2.5px solid var(--status-rejected); }
-    
-    .checklist {
-      display: grid;
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .check-item {
-      padding: 14px;
-      border-radius: 14px;
-      border: 1.5px solid var(--border);
-      background: rgba(255,255,255,0.6);
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 12px;
-      align-items: start;
-    }
-    .check-status-icon {
-      font-size: 20px;
-      font-weight: bold;
-    }
-    .status-PASS { color: #15803d; }
-    .status-WARNING { color: #b45309; }
-    .status-FAIL { color: #b91c1c; }
-    
-    .check-title {
-      font-weight: 700;
-      margin: 0;
-      font-size: 15px;
-    }
-    .check-desc {
-      font-size: 13px;
-      color: var(--muted);
-      margin: 4px 0 0 0;
-    }
-    
-    .editor-group {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 12px;
-    }
-    .editor-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .editor-field label {
-      font-weight: 700;
-      font-size: 14px;
-    }
-    .editor-field input, .editor-field select, .editor-field textarea {
-      padding: 10px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: white;
-      color: var(--ink);
-      font-family: inherit;
-    }
-    .editor-field input:disabled, .editor-field select:disabled, .editor-field textarea:disabled {
-      background: #f1f5f9;
-      color: #64748b;
-      cursor: not-allowed;
-    }
-    
-    .action-panel {
-      display: flex;
-      gap: 12px;
-      margin-top: 20px;
-      border-top: 1px solid var(--border);
-      padding-top: 20px;
-    }
-    
-    .certificate-card {
-      background: #fafaf9;
-      border: 3px double var(--accent-2);
-      border-radius: 18px;
-      padding: 24px;
-      margin-top: 24px;
-      position: relative;
-    }
-    .cert-seal {
-      position: absolute;
-      top: 20px;
-      right: 20px;
-      border: 3px solid var(--accent-2);
-      color: var(--accent-2);
-      padding: 8px 16px;
-      border-radius: 8px;
-      transform: rotate(15deg);
-      font-weight: 700;
-      text-transform: uppercase;
-      font-size: 14px;
-    }
-    .cert-field {
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-    .cert-field strong {
-      display: inline-block;
-      width: 180px;
-      color: var(--ink);
-    }
-    .signature-box {
-      background: #f1f5f9;
-      padding: 12px;
-      border-radius: 10px;
-      font-family: monospace;
-      font-size: 12px;
-      word-break: break-all;
-      border: 1px solid #cbd5e1;
-      margin-top: 10px;
-      max-height: 80px;
-      overflow-y: auto;
-    }
-    
-    .qr-container {
-      display: flex;
-      gap: 16px;
-      align-items: center;
-      margin-top: 18px;
-      background: #fff;
-      padding: 14px;
-      border-radius: 14px;
-      border: 1px dashed var(--border);
-    }
-    .qr-code-canvas {
-      background: white;
-      padding: 4px;
-      border: 1px solid #ddd;
-    }
-    
-    pre {
-      margin: 0;
-      padding: 18px;
-      overflow: auto;
-      max-height: 40vh;
-      background: #0f172a;
-      color: #e2e8f0;
-      border-radius: 18px;
-      font-size: 13px;
-      line-height: 1.55;
-    }
-    @media (max-width: 920px) {
-      .hero, .grid, .editor-group { grid-template-columns: 1fr; }
-    }
-    
-    /* Workflow Progress Indicator */
-    .steps-container {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 24px;
-      background: rgba(31, 41, 55, 0.03);
-      padding: 12px 16px;
-      border-radius: 16px;
-      border: 1px solid var(--border);
-    }
-    .step-item {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      flex: 1;
-      position: relative;
-      text-align: center;
-    }
-    .step-item:not(:last-child)::after {
-      content: "";
-      position: absolute;
-      top: 14px;
-      left: 50%;
-      width: 100%;
-      height: 2px;
-      background: var(--border);
-      z-index: 1;
-    }
-    .step-dot {
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      background: #e2e8f0;
-      border: 2px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 700;
-      z-index: 2;
-      color: var(--muted);
-    }
-    .step-label {
-      font-size: 11px;
-      font-weight: 700;
-      margin-top: 6px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .step-item.active .step-dot {
-      background: var(--accent);
-      color: white;
-      border-color: var(--accent);
-    }
-    .step-item.active .step-label {
-      color: var(--accent);
-    }
-    .step-item.completed .step-dot {
-      background: var(--accent-2);
-      color: white;
-      border-color: var(--accent-2);
-    }
-    .step-item.completed .step-label {
-      color: var(--accent-2);
-    }
-    .step-item.rejected .step-dot {
-      background: var(--status-rejected);
-      color: white;
-      border-color: var(--status-rejected);
-    }
-    .step-item.rejected .step-label {
-      color: var(--status-rejected);
-    }
-    @media (max-width: 768px) {
-      .steps-container {
-        flex-direction: column;
-        gap: 12px;
-        align-items: flex-start;
-      }
-      .step-item {
-        flex-direction: row;
-        gap: 12px;
-        text-align: left;
-        width: 100%;
-      }
-      .step-item:not(:last-child)::after {
-        display: none;
-      }
-      .step-label {
-        margin-top: 0;
-      }
-      .action-panel {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .action-panel div {
-        flex-direction: column;
-        align-items: stretch;
-        width: 100%;
-      }
-      .action-panel div input {
-        width: 100%;
-      }
-      .action-panel div button {
-        width: 100%;
-      }
+    .raw summary::-webkit-details-marker{display:none}
+    .raw summary::after{content:"+ open"}
+    .raw[open] summary::after{content:"close ×"}
+    .raw pre{margin:0;padding:18px;background:var(--ink);color:var(--paper-deep);font-family:var(--type);font-size:12px;line-height:1.7;max-height:320px;overflow:auto}
+
+    /* ---------- GIS panel ---------- */
+    .gis{margin-top:26px}
+    .gis .attr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+    .gis .attr{background:var(--card);border:1px solid var(--rule);padding:12px 14px}
+    .gis .attr .k{font-family:var(--type);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px}
+    .gis .attr .v{font-size:14px;font-weight:700;color:var(--ink)}
+    .gis .authority{background:rgba(46,107,79,.08);border:1px solid rgba(46,107,79,.35);padding:12px 14px;margin-bottom:14px}
+    .gis .authority .k{font-family:var(--type);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}
+    .gis .authority .v{font-size:14px;font-weight:700;color:var(--green);margin-top:2px}
+    .gis .authority .s{font-size:11px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .gis .infonote{background:var(--paper-deep);border-left:4px solid var(--stamp);padding:12px 16px;font-size:13.5px;color:var(--ink-soft);margin-bottom:14px}
+    .gis .village-warn{background:rgba(169,106,31,.1);border-left:4px solid var(--amber);padding:10px 14px;font-size:13px;color:var(--amber);margin-bottom:14px}
+    .gis .src-note{font-family:var(--type);font-size:11.5px;color:var(--ink-soft);font-style:italic;margin-bottom:16px}
+    .gis .map-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:20px;align-items:start}
+    @media(max-width:900px){.gis .map-grid{grid-template-columns:1fr}}
+    .gis #gis-map{width:100%;height:380px;border:1.5px solid var(--rule);background:var(--paper-deep);z-index:1}
+    .gis .legend{font-size:12px;background:var(--card);border:1px solid var(--rule);padding:10px 14px;margin-top:10px;display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+    .gis .legend .sw{display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:-2px}
+    .gis .legend .lbl{font-weight:600;color:var(--ink)}
+    .gis .coords{font-family:var(--type);font-size:11.5px;color:var(--ink-soft);margin-top:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .gis .metric{background:var(--card);border:1px solid var(--rule);padding:16px;margin-bottom:14px}
+    .gis .metric h4{font-family:var(--type);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--stamp);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--rule-soft)}
+    .gis .metric p{font-size:13px;line-height:1.6;color:var(--ink-soft);margin:0 0 6px}
+    .gis .metric p b{color:var(--ink)}
+    .gis .metric .disclaimer{font-family:var(--type);font-size:11px;color:var(--amber);background:rgba(169,106,31,.1);border:1px solid rgba(169,106,31,.3);padding:8px;margin-top:8px;font-style:italic}
+    .gis .metric .quiet{font-family:var(--type);font-size:11px;color:var(--ink-soft);background:var(--paper);border:1px solid var(--rule-soft);padding:8px;font-style:italic;margin-top:8px}
+
+    /* ---------- footer ---------- */
+    footer{border-top:3px double var(--rule);padding:40px 0;margin-top:72px;background:rgba(255,255,255,.3)}
+    .foot-note{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-family:var(--type);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+
+    /* ---------- reveals ---------- */
+    .rv{opacity:0;transform:translateY(22px);transition:opacity .7s ease, transform .7s ease}
+    .rv.in{opacity:1;transform:none}
+    @media (prefers-reduced-motion: reduce){
+      .rv{opacity:1;transform:none;transition:none}
+      .big-seal{animation:none}
+      .ov-pipe .shaft{animation:none}
+      html{scroll-behavior:auto}
+      .dropzone,.btn{transition:none}
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <!-- HERO SECTION -->
-    <div class="hero">
-      <section class="card intro">
-        <span class="kicker">Government Registry Desk</span>
-        <h1>Land Record Registry Office</h1>
-        <p>
-          State-level document verification engine. Process scans locally, execute cryptographic validation checks, correct extraction anomalies, and certify documents with official RSA-PSS seals.
-        </p>
-        <div style="margin-top: 10px;">
-          <a href="/" class="btn btn-secondary">New Upload</a>
-        </div>
-      </section>
-      
-      <section class="card upload">
-        <form action="/extract" method="post" enctype="multipart/form-data">
-          <div>
-            <label for="document_image" style="font-weight: 700; display: block; margin-bottom: 6px;">Select Scan Copy (Image or PDF):</label>
-            <input type="file" name="document_image" id="document_image" accept="image/*,.pdf,application/pdf" required>
-          </div>
-          
-          <div style="display: grid; gap: 6px;">
-            <label for="processing_mode" style="font-weight: 700;">Processing Mode:</label>
-            <select name="processing_mode" id="processing_mode" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white; font-weight: 600;">
-              <option value="gpu" $gpu_selected>⚡ Kaggle / Colab GPU Remote Tunnel (from colab_url.txt)</option>
-              <option value="cpu" $cpu_selected>🐢 Local CPU (Pre-loaded PaddleOCR)</option>
-            </select>
-          </div>
-          
-          <button type="submit" class="btn btn-primary">Process Extraction</button>
-        </form>
-        <div class="status-banner">System is active locally. Key pair generated and managed at <strong>verification_keys/</strong>.</div>
-      </section>
-    </div>
 
-    <!-- MAIN GRID SECTION -->
-    <div class="grid">
-      <section class="card preview">
-        <h2>DOCUMENT PREVIEW</h2>
-        $preview
-      </section>
+<div class="security-bg" aria-hidden="true"></div>
 
-      <section class="card output">
-        <!-- HEADER STATE -->
-        <div class="console-header">
-          <h2>Verification Console</h2>
-          $badge_markup
-        </div>
-        
-        $steps_markup
-        $message_markup
-        $timing_info
-        
-        $console_markup
-        $gis_markup
-      </section>
-    </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="roughen">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="2" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="2.5"/>
+  </filter>
+</svg>
 
-    <!-- RAW JSON SECTION -->
-    $raw_json_markup
+<div class="perf" aria-hidden="true"></div>
+<div class="page">
+
+<header>
+  <div class="wrap reg-bar">
+    <a class="brand" href="/">
+      <b>MUHAR</b>
+      <span>मुहर &nbsp;·&nbsp; registry console</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="/">Registry</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/new">New Scan</a>
+      <a href="/#sealing">Sealing</a>
+      <a href="/#verify">Verify</a>
+    </nav>
+    <span class="reg-no">$reg_no</span>
   </div>
+</header>
 
-  <!-- OFFLINE CLIENT-SIDE QR GENERATION ENGINE -->
+<main>
+  <div class="wrap">
+$stage_markup
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot-note">
+    <span>MUHAR · Offline Registry Console</span>
+    <span>Sale Deeds · Agreements · GPA</span>
+    <span>No cloud. No keys leaving the office.</span>
+  </div>
+</footer>
+
+</div>
+<div class="perf bottom" aria-hidden="true"></div>
+
+<!-- OFFLINE CLIENT-SIDE QR GENERATION ENGINE -->
+<!-- OFFLINE CLIENT-SIDE QR GENERATION ENGINE -->
   <script>
     // Lightweight completely self-contained QR Code generator in JS (QRCode library wrapper)
     // Supports drawing QR codes onto HTML5 Canvas elements locally.
@@ -1191,7 +1104,7 @@ HTML_PAGE = Template("""<!doctype html>
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, size, size);
       
-      ctx.fillStyle = '#000000';
+      ctx.fillStyle = '#221D17';
       for (var row = 0; row < moduleCount; row++) {
         for (var col = 0; col < moduleCount; col++) {
           if (qr.isDark(row, col)) {
@@ -1206,9 +1119,105 @@ HTML_PAGE = Template("""<!doctype html>
       }
     }
   </script>
+
+<script>
+  var REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* reveal on scroll */
+  (function(){
+    var els = document.querySelectorAll('.rv');
+    if ('IntersectionObserver' in window && !REDUCED) {
+      var io = new IntersectionObserver(function(es){
+        es.forEach(function(e){
+          if(!e.isIntersecting) return;
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        });
+      }, {threshold:.12});
+      els.forEach(function(el){ io.observe(el); });
+    } else {
+      els.forEach(function(el){ el.classList.add('in'); });
+    }
+  })();
+
+  /* intake desk: dropzone, file chip, processing overlay */
+  (function(){
+    var form = document.getElementById('scanForm');
+    if (!form) return;
+    var dz = document.getElementById('dropzone'),
+        fi = document.getElementById('document_image'),
+        chip = document.getElementById('filechip'),
+        chipName = document.getElementById('chipName'),
+        chipSize = document.getElementById('chipSize'),
+        chipClear = document.getElementById('chipClear'),
+        dzTitle = document.getElementById('dzTitle'),
+        overlay = document.getElementById('overlay'),
+        ovStage = document.getElementById('ovStage');
+
+    function humanSize(n){
+      if (n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+      if (n >= 1024) return Math.round(n/1024) + ' KB';
+      return n + ' B';
+    }
+    function setFile(f){
+      if (!f) return;
+      chipName.textContent = f.name;
+      chipSize.textContent = humanSize(f.size);
+      chip.hidden = false;
+      dz.classList.add('has');
+      dzTitle.innerHTML = 'Scan loaded, drop a file here to replace it';
+    }
+    dz.addEventListener('click', function(){ fi.click(); });
+    dz.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); }
+    });
+    ['dragenter','dragover'].forEach(function(ev){
+      dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.add('drag'); });
+    });
+    ['dragleave','drop'].forEach(function(ev){
+      dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.remove('drag'); });
+    });
+    dz.addEventListener('drop', function(e){
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f && window.DataTransfer) {
+        var dt = new DataTransfer();
+        dt.items.add(f);
+        fi.files = dt.files;
+      }
+      setFile(f || (fi.files && fi.files[0]));
+    });
+    fi.addEventListener('change', function(){ setFile(fi.files[0]); });
+    chipClear.addEventListener('click', function(){
+      fi.value = '';
+      chip.hidden = true;
+      dz.classList.remove('has');
+      dzTitle.innerHTML = 'Drop the scan here, or <span>browse files</span>';
+    });
+    form.addEventListener('submit', function(e){
+      if (!fi.files || !fi.files.length) {
+        e.preventDefault();
+        dzTitle.innerHTML = 'Choose a scan first, then press Process Extraction';
+        dz.focus();
+        return;
+      }
+      if (overlay && !REDUCED) {
+        overlay.classList.add('on');
+        var stages = ['Reading the scan', 'Parsing the clauses', 'Filling the particulars', 'Running the machine checklist'];
+        var si = 0;
+        setInterval(function(){
+          si = (si + 1) % stages.length;
+          if (ovStage) ovStage.textContent = stages[si];
+        }, 2300);
+      } else if (overlay) {
+        overlay.classList.add('on');
+      }
+    });
+  })();
+</script>
 </body>
 </html>
 """)
+
 
 
 def render_gis_section(ocr_payload: dict) -> str:
@@ -1219,18 +1228,22 @@ def render_gis_section(ocr_payload: dict) -> str:
         gis_data = gis_service.verify_gis_location(ocr_payload)
     except Exception as exc:
         return f"""
-        <div class="card" style="margin-top: 24px; padding: 20px; border: 1.5px solid #fecaca; background: #fef2f2;">
-          <h3 style="margin-top: 0; color: #991b1b;">GIS Verification Notice</h3>
-          <p style="color: #7f1d1d; margin: 0;">GIS resolution note: {html.escape(str(exc))}</p>
-        </div>
+        <section class="panel gis rv" style="border-color:var(--stamp)">
+          <div class="tab t-red"><span>Particulars · Property Location</span><em>GIS</em></div>
+          <div class="body">
+            <p style="color:var(--stamp-deep);font-family:var(--type);font-size:13px;">GIS resolution note: {html.escape(str(exc))}</p>
+          </div>
+        </section>
         """
 
     if gis_data.get("status") in ("UNSUPPORTED_STATE", "DATASET_NOT_FOUND", "UNRESOLVED") or not gis_data.get("coordinates"):
         return f"""
-        <div class="card" style="margin-top: 24px; padding: 20px; border: 1.5px solid #fde68a; background: #fffbeb;">
-          <h3 style="margin-top: 0; color: #92400e; font-size: 16px;">🗺️ GIS Location Verification</h3>
-          <p style="color: #78350f; margin: 4px 0 0 0; font-size: 14px;">{html.escape(gis_data.get('disclaimer') or 'Location could not be resolved against local GIS dataset.')}</p>
-        </div>
+        <section class="panel gis rv">
+          <div class="tab"><span>Particulars · Property Location</span><em>GIS</em></div>
+          <div class="body">
+            <p style="color:var(--amber);font-size:14px;">{html.escape(gis_data.get('disclaimer') or 'Location could not be resolved against local GIS dataset.')}</p>
+          </div>
+        </section>
         """
 
     lat = gis_data["coordinates"]["lat"]
@@ -1239,153 +1252,107 @@ def render_gis_section(ocr_payload: dict) -> str:
     # Dual layer geometry for Leaflet rendering
     admin_geom = gis_data.get("administrative_geometry")
     parcel_geom = gis_data.get("estimated_parcel_polygon")
-    
+
     admin_geojson_str = json.dumps(admin_geom) if admin_geom else "null"
     parcel_geojson_str = json.dumps(parcel_geom) if parcel_geom else "null"
 
     res_level = (gis_data.get("resolution_level") or "none").capitalize()
 
-
-
     village_display = html.escape(str(gis_data.get("village") or "Not available"))
     if gis_data.get("village_status") == "NOT_RESOLVED":
-        village_display += ' <span style="font-size: 11px; color: #d97706; font-weight: normal;">(Not in dataset)</span>'
+        village_display += ' <span style="font-family:var(--type);font-size:11px;color:var(--amber);font-weight:400;">(not in dataset)</span>'
 
     dims_info = gis_data.get("dimensions") or {}
     area_str = f"{dims_info.get('area_sqm', 'N/A')} m² ({dims_info.get('area_sqft', 'N/A')} sq ft)" if dims_info else "Dimensions not extracted"
     dims_str = f"{dims_info.get('east_west_m', 'N/A')} m × {dims_info.get('north_south_m', 'N/A')} m" if dims_info else "N/A"
 
     return f"""
-    <!-- GIS PROPERTY LOCATION VERIFICATION CARD -->
+    <!-- GIS PROPERTY LOCATION VERIFICATION PANEL -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
-    <div class="card" style="margin-top: 24px; padding: 24px; border: 2px solid #2563eb; background: #f8fafc;">
-      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 12px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 24px;">🗺️</span>
-          <h2 style="margin: 0; color: #1e3a8a; font-size: 1.4rem;">GIS PROPERTY LOCATION VERIFICATION</h2>
-        </div>
+    <section class="panel gis rv">
+      <div class="tab"><span>Particulars · Property Location</span><em>GIS</em></div>
+      <div class="body">
+
+      <div class="authority">
+        <div class="k">Geographic Authority · Hierarchy Consistency</div>
+        <div class="v">VALIDATED</div>
+        <div class="s" title="{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}">{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}</div>
       </div>
 
-      <!-- GEOGRAPHIC AUTHORITY & HIERARCHY CONSISTENCY PANEL -->
-      <div style="background: white; border: 1px solid #cbd5e1; border-radius: 14px; padding: 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-        <h4 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
-          <span>🏛️ Geographic Authority & Hierarchy Consistency</span>
-          <span style="font-size: 11px; font-weight: normal; color: #64748b;">Single GIS Source of Truth</span>
-        </h4>
-
-        <div>
-          <div style="background: #f0fdf4; padding: 12px 14px; border-radius: 10px; border: 1px solid #bbf7d0;">
-            <div style="font-size: 11px; color: #166534; font-weight: 600; text-transform: uppercase;">State Authority</div>
-            <div style="font-size: 14px; font-weight: 700; color: #15803d; margin-top: 2px;">VALIDATED</div>
-            <div style="font-size: 11px; color: #166534; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}">{html.escape(gis_data.get('source_attribution') or 'State GIS Data')}</div>
-          </div>
-        </div>
-      </div>
-
-      <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 10px; font-size: 14px; color: #1e40af; margin-bottom: 12px; font-weight: 500; line-height: 1.5;">
-        ℹ️ Based on the location information extracted from your document, this map shows the geographic location resolved from local GIS data.
+      <div class="infonote">
+        Resolved from the location information extracted out of the document, against the local GIS dataset only.
       </div>
       """ + (f"""
-      <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: #92400e; margin-bottom: 14px;">
-        ⚠️ {html.escape(gis_data.get('village_disclaimer'))}
-      </div>
+      <div class="village-warn">⚠ {html.escape(gis_data.get('village_disclaimer'))}</div>
       """ if (gis_data.get("village_disclaimer") and not str(gis_data.get("village_disclaimer", "")).startswith("Contradictory")) else "") + f"""
 
-      <div style="font-size: 12px; color: #64748b; font-style: italic; margin-bottom: 18px;">
-        Note: {html.escape(gis_data.get('disclaimer') or '')} Source: {html.escape(gis_data.get('source_attribution') or 'geoBoundaries')}
-      </div>
+      <div class="src-note">Note: {html.escape(gis_data.get('disclaimer') or '')} Source: {html.escape(gis_data.get('source_attribution') or 'geoBoundaries')}</div>
 
       <!-- LOCATION ATTRIBUTES GRID -->
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px;">
-        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">State</div>
-          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('state') or 'N/A'))}</div>
-        </div>
-        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">District</div>
-          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('district') or 'N/A'))}</div>
-        </div>
-        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Mandal / Taluk</div>
-          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('mandal') or 'N/A'))}</div>
-        </div>
-        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Village</div>
-          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{village_display}</div>
-        </div>
-        <div style="background: white; padding: 12px 14px; border-radius: 12px; border: 1px solid #e2e8f0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold; margin-bottom: 4px;">Survey Number</div>
-          <div style="font-size: 14px; font-weight: 700; color: #0f172a;">{html.escape(str(gis_data.get('survey_number') or 'N/A'))}</div>
-        </div>
+      <div class="attr-grid">
+        <div class="attr"><div class="k">State</div><div class="v">{html.escape(str(gis_data.get('state') or 'N/A'))}</div></div>
+        <div class="attr"><div class="k">District</div><div class="v">{html.escape(str(gis_data.get('district') or 'N/A'))}</div></div>
+        <div class="attr"><div class="k">Mandal / Taluk</div><div class="v">{html.escape(str(gis_data.get('mandal') or 'N/A'))}</div></div>
+        <div class="attr"><div class="k">Village</div><div class="v">{village_display}</div></div>
+        <div class="attr"><div class="k">Survey Number</div><div class="v">{html.escape(str(gis_data.get('survey_number') or 'N/A'))}</div></div>
       </div>
 
       <!-- MAP AND SPATIAL DETAILS GRID -->
-      <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; align-items: start;">
+      <div class="map-grid">
         <!-- INTERACTIVE LEAFLET MAP -->
         <div>
-          <div id="gis-map" style="width: 100%; height: 380px; border-radius: 16px; border: 2px solid #cbd5e1; background: #e2e8f0; z-index: 1;"></div>
+          <div id="gis-map"></div>
           <!-- MAP LEGEND -->
-          <div style="font-size: 12px; background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="display: inline-block; width: 14px; height: 14px; background: rgba(59, 130, 246, 0.3); border: 2px solid #2563eb; border-radius: 3px;"></span>
-              <span style="color: #1e293b; font-weight: 600;">Source Administrative / Village Boundary</span>
-            </div>
+          <div class="legend">
+            <div><span class="sw" style="background:rgba(59,130,246,.3);border:2px solid #2563eb;"></span><span class="lbl">Source administrative / village boundary</span></div>
             """ + (f"""
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="display: inline-block; width: 14px; height: 14px; background: rgba(16, 185, 129, 0.3); border: 2px solid #059669; border-radius: 3px;"></span>
-              <span style="color: #065f46; font-weight: 600;">Estimated Parcel Boundary</span>
-            </div>
+            <div><span class="sw" style="background:rgba(16,185,129,.3);border:2px solid #059669;"></span><span class="lbl">Estimated parcel boundary</span></div>
             """ if parcel_geom else "") + f"""
           </div>
-          <div style="font-size: 12px; color: #64748b; margin-top: 8px; display: flex; justify-content: space-between;">
+          <div class="coords">
             <span>Coordinates: <strong>{lat}, {lng}</strong></span>
             <span>Dataset: <strong>{html.escape(gis_data.get('source_attribution') or 'geoBoundaries')}</strong></span>
           </div>
         </div>
 
         <!-- SPATIAL METRICS -->
-        <div style="display: flex; flex-direction: column; gap: 14px;">
-          <div style="background: white; padding: 16px; border-radius: 14px; border: 1px solid #e2e8f0;">
-            <h4 style="margin: 0 0 10px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px;">📐 Dimensions & Parcel Estimate</h4>
-            <div style="font-size: 13px; line-height: 1.6; color: #334155;">
-              <div style="margin-bottom: 6px;"><strong>Approximate Area:</strong><br><span style="color: #0f172a; font-weight: 600;">{html.escape(area_str)}</span></div>
-              <div style="margin-bottom: 6px;"><strong>Document Dimensions:</strong><br><span style="color: #0f172a; font-weight: 600;">{html.escape(dims_str)}</span></div>
-              """ + (f"""
-              <div style="font-size: 11px; color: #d97706; font-style: italic; margin-top: 8px; background: #fffbeb; padding: 8px; border-radius: 6px; border: 1px solid #fde68a;">
-                ⚠️ {html.escape(dims_info.get('disclaimer', ''))}
-              </div>
-              """ if dims_info else "") + f"""
-            </div>
+        <div>
+          <div class="metric">
+            <h4>Dimensions &amp; Parcel Estimate</h4>
+            <p><b>Approximate area:</b> {html.escape(area_str)}</p>
+            <p><b>Document dimensions:</b> {html.escape(dims_str)}</p>
+            """ + (f"""
+            <div class="disclaimer">⚠ {html.escape(dims_info.get('disclaimer', ''))}</div>
+            """ if dims_info else "") + f"""
           </div>
 
-          <div style="background: white; padding: 16px; border-radius: 14px; border: 1px solid #e2e8f0;">
-            <h4 style="margin: 0 0 10px 0; color: #1e3a8a; font-size: 14px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px;">🏛️ Cadastral Survey Boundary</h4>
-            <div style="font-size: 13px; line-height: 1.6; color: #334155;">
-              <div style="margin-bottom: 6px;"><strong>Cadastral Status:</strong> <span style="color: #64748b; font-weight: bold;">NOT_AVAILABLE</span></div>
-              <div style="font-size: 11px; color: #64748b; font-style: italic; background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                Authoritative cadastral survey boundaries are not currently available in the offline GIS registry. The estimated parcel rectangle is an approximate visualization based on document dimensions and is NOT an authoritative cadastral boundary.
-              </div>
+          <div class="metric">
+            <h4>Cadastral Survey Boundary</h4>
+            <p><b>Cadastral status:</b> NOT_AVAILABLE</p>
+            <div class="quiet">
+              Authoritative cadastral survey boundaries are not currently available in the offline GIS registry. The estimated parcel rectangle is an approximate visualization based on document dimensions and is NOT an authoritative cadastral boundary.
             </div>
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </section>
 
     <script>
       (function() {{
         function initGisMap() {{
           var mapContainer = document.getElementById('gis-map');
           if (!mapContainer || mapContainer._leaflet_id) return;
-          
+
           var lat = {lat};
           var lng = {lng};
           var adminGeojson = {admin_geojson_str};
           var parcelGeojson = {parcel_geojson_str};
-          
+
           var map = L.map('gis-map').setView([lat, lng], 13);
-          
+
           L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors | GIS Verification'
@@ -1437,16 +1404,409 @@ def render_gis_section(ocr_payload: dict) -> str:
     """
 
 
+BADGE_LABELS = {
+    "EXTRACTED": "Extracted",
+    "NEEDS_REVIEW": "Needs review",
+    "READY_FOR_APPROVAL": "Ready for approval",
+    "APPROVED": "Approved & sealed",
+    "REJECTED": "Rejected",
+    "FAIL": "Checks failed",
+}
+
+
+def _badge_markup(status: str) -> str:
+    label = BADGE_LABELS.get(status, status.replace("_", " ").title())
+    return f'<span class="badge b-{html.escape(status.lower())}">{html.escape(label)}</span>'
+
+
+def _stepper_markup(status: str) -> str:
+    """Console stepper: i Scan · ii Machine check · iii Clerk review · iv Seal."""
+    checks_ok = status in {"READY_FOR_APPROVAL", "APPROVED"}
+    if status == "APPROVED":
+        states = ["done", "done", "done", "done"]
+        labels = ["Scan", "Machine check", "Clerk review", "Sealed"]
+    elif status == "REJECTED":
+        states = ["done", "done", "done", "bad"]
+        labels = ["Scan", "Machine check", "Clerk review", "Rejected"]
+    else:
+        machine = "done" if checks_ok else "warn"
+        states = ["done", machine, "now", ""]
+        labels = ["Scan", "Machine check", "Clerk review", "Officer seal"]
+
+    glyphs = ["i", "ii", "iii", "iv"]
+    items = []
+    for glyph, label, st in zip(glyphs, labels, states):
+        cls = f"step {st}" if st else "step"
+        items.append(
+            f'<div class="{cls}"><div class="dot">{glyph}</div>'
+            f'<div class="lbl">{label}</div></div>'
+        )
+    return f'<div class="stepper rv in" role="list" aria-label="Progress">{"".join(items)}</div>'
+
+
+def _banner_markup(message: str, blocked: bool = False) -> str:
+    if not message:
+        return ""
+    cls = "banner blocked" if blocked else "banner"
+    mark = "✗" if blocked else "§"
+    return f'<div class="{cls} rv in"><span class="bmark">{mark}</span><p>{html.escape(message)}</p></div>'
+
+
+def _upload_stage(
+    cpu_selected: str,
+    gpu_selected: str,
+    colab_url: str,
+    banner_markup: str = "",
+    docket_markup: str = "",
+) -> str:
+    if colab_url:
+        try:
+            worker_host = urlparse(colab_url).hostname or colab_url
+        except Exception:
+            worker_host = colab_url
+        mode_note = f"GPU worker online at {worker_host} · OCR runs there, everything else stays here"
+    else:
+        mode_note = "No GPU worker configured · OCR will run on this machine's CPU"
+
+    return f"""
+    <section class="desk">
+      <p class="eyebrow rv">New Registration · Desk 01</p>
+      <h1 class="rv">It starts with the <em>scan.</em></h1>
+      <p class="lede rv">Drop the sale deed, agreement of sale or GPA below. Reading, parsing and the machine checklist all happen on office hardware.</p>
+      {banner_markup}
+      {docket_markup}
+      <form id="scanForm" class="scan-form panel rv" action="/extract" method="post" enctype="multipart/form-data">
+        <div class="tab"><span>Form 1 · Scan Intake</span><em>offline</em></div>
+        <div class="body">
+          <p class="field-label" id="dzLabel">Select Scan Copy (Image or PDF)</p>
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-labelledby="dzLabel">
+            <svg class="dz-ico" viewBox="0 0 42 52" aria-hidden="true">
+              <path d="M2 2 h26 l12 12 v36 h-38 z"/>
+              <path d="M28 2 v12 h12"/>
+              <path d="M12 30 h18 M12 38 h18 M12 22 h8"/>
+            </svg>
+            <p class="dz-title" id="dzTitle">Drop the scan here, or <span>browse files</span></p>
+            <p class="dz-hint">PNG · JPG · PDF &mdash; read locally, sealed on this machine, never sent to a cloud</p>
+            <input type="file" name="document_image" id="document_image" accept="image/*,.pdf,application/pdf" hidden>
+          </div>
+          <div id="filechip" class="filechip" hidden>
+            <span id="chipName"></span>
+            <span class="chip-meta"><span id="chipSize"></span><button type="button" id="chipClear" class="chip-x" aria-label="Remove selected file">&times;</button></span>
+          </div>
+          <div class="mode-row">
+            <label class="field-label" for="processing_mode">Processing</label>
+            <select name="processing_mode" id="processing_mode">
+              <option value="gpu" {gpu_selected}>Remote GPU worker (encrypted tunnel)</option>
+              <option value="cpu" {cpu_selected}>Local CPU (PaddleOCR on this machine)</option>
+            </select>
+            <p class="mode-note">{html.escape(mode_note)}</p>
+          </div>
+          <div class="submit-row">
+            <p class="submit-note">Next · checklist → clerk review → seal</p>
+            <button type="submit" class="btn btn-primary btn-xl">Process Extraction</button>
+          </div>
+        </div>
+      </form>
+      <div class="next-strip rv" aria-hidden="true">
+        <span class="next"><b>i.</b> Machine checklist</span>
+        <span class="next"><b>ii.</b> Clerk review</span>
+        <span class="next"><b>iii.</b> Officer seal</span>
+      </div>
+    </section>
+    <div class="overlay" id="overlay" role="status" aria-live="polite">
+      <div class="ov-stamp">In Progress</div>
+      <p class="ov-stage" id="ovStage">Reading the scan</p>
+      <div class="ov-pipe" aria-hidden="true"><div class="shaft"></div></div>
+      <p class="ov-note">Running on office hardware · no cloud</p>
+    </div>
+    """
+
+
+def _checklist_panel(checks: list) -> str:
+    rows = []
+    counts = {"PASS": 0, "WARNING": 0, "FAIL": 0}
+    for c in checks:
+        chk_status = c.get("status", "PASS")
+        counts[chk_status] = counts.get(chk_status, 0) + 1
+        chk_name = c.get("name", "")
+        chk_msg = c.get("message", "")
+        chk_sev = c.get("severity", "")
+
+        glyph_cls = {"PASS": "pass", "WARNING": "warn"}.get(chk_status, "fail")
+        glyph = {"PASS": "✓", "WARNING": "⚠"}.get(chk_status, "✗")
+        sev = f"<small>{html.escape(chk_sev)}</small>" if chk_sev == "critical" and chk_status == "FAIL" else ""
+        row_cls = "check fail-row" if chk_status == "FAIL" else "check"
+        rows.append(
+            f"""
+            <div class="{row_cls}">
+              <span class="g {glyph_cls}">{glyph}</span>
+              <div>
+                <p class="t">{html.escape(chk_name)}{sev}</p>
+                <p class="m">{html.escape(chk_msg)}</p>
+              </div>
+            </div>
+            """
+        )
+
+    summary = (
+        f'<span class="ok">{counts.get("PASS", 0)} passed</span> · '
+        f'<span class="md">{counts.get("WARNING", 0)} warnings</span> · '
+        f'<span class="no">{counts.get("FAIL", 0)} failed</span>'
+    )
+    return f"""
+    <section class="panel checklist-panel rv" style="margin-top:24px; margin-bottom:28px;">
+      <div class="tab"><span>Schedule A · Machine Checklist</span><em>automated</em></div>
+      <div class="body">
+        <div class="checklist checklist-grid">{''.join(rows)}</div>
+        <p class="check-sum" style="margin-top:16px;">{summary}</p>
+      </div>
+    </section>
+    """
+
+
+def _exhibit_panel(preview: str, caption: str) -> str:
+    cap = html.escape(caption or "scan copy")
+    return f"""
+    <section class="panel exhibit-panel rv">
+      <div class="tab"><span>Exhibit · Scan Copy</span><em>{cap}</em></div>
+      <div class="preview-body">
+        {preview}
+        <div class="pdf-note" hidden>The scan copy is a PDF on file &mdash; its pages were stacked and read in full.</div>
+      </div>
+    </section>
+    """
+
+
+def _clerk_panel(record: dict, message: str) -> str:
+    rec_id = record["verification_id"]
+    payload_data = record["document_payload"]
+    checks = record.get("checks", [])
+    prop = payload_data.get("property", {}) or {}
+    stamp = payload_data.get("stamp_information", {}) or {}
+    parties = payload_data.get("parties", []) or []
+    parties_json_str = json.dumps(parties, ensure_ascii=False)
+
+    has_critical_fail = any(
+        c.get("status") == "FAIL" and c.get("severity") == "critical" for c in checks
+    )
+    if has_critical_fail:
+        warn = (
+            '<p class="warnbox stop">Officer approval is locked while critical checks fail. '
+            "Correct the flagged fields and Save Corrections first.</p>"
+        )
+        approve_disabled = "disabled"
+    else:
+        warn = '<p class="warnbox ok">Officer approval permanently certifies the reviewed facts and applies the seal.</p>'
+        approve_disabled = ""
+
+    action_buttons = f"""
+      <div class="action-panel">
+        {warn}
+        <button type="submit" name="action" value="correct" class="btn btn-ghost">Save Corrections</button>
+        <button type="submit" name="action" value="approve" class="btn btn-green" {approve_disabled}>Officer Approve &amp; Seal</button>
+        <div class="reject-group">
+          <input type="text" name="rejection_reason" id="rejection_reason" placeholder="Rejection reason (required)" aria-label="Rejection reason">
+          <button type="submit" name="action" value="reject" class="btn btn-outline-red"
+            onclick="if(!document.getElementById('rejection_reason').value.trim()) {{ alert('Please provide a rejection reason.'); return false; }}">Officer Reject</button>
+        </div>
+      </div>
+    """
+
+    blocked = ""
+
+    return f"""
+    <section class="panel clerk rv">
+      <div class="tab"><span>Schedule B · Clerk Review</span><em>correct in place</em></div>
+      <div class="body">
+        {blocked}
+        <p class="note">Record {html.escape(rec_id)} · read each field against the scan, fix what the OCR got wrong, then save or pass it up to the officer.</p>
+        <form action="/extract" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="verification_id" value="{html.escape(rec_id)}">
+          <div class="editor-grid">
+            <div class="editor-field">
+              <label for="f_doc_type">Document Type</label>
+              <input type="text" id="f_doc_type" name="document_type" value="{html.escape(str(payload_data.get('document_type') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_doc_no">Document Number</label>
+              <input type="text" id="f_doc_no" name="document_number" value="{html.escape(str(payload_data.get('document_number') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_survey">Survey Number</label>
+              <input type="text" id="f_survey" name="survey_number" value="{html.escape(str(prop.get('survey_number') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_subsurvey">Sub-Survey Number</label>
+              <input type="text" id="f_subsurvey" name="sub_survey_number" value="{html.escape(str(prop.get('sub_survey_number') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_area">Property Area</label>
+              <input type="text" id="f_area" name="area" value="{html.escape(str(prop.get('area') if prop.get('area') is not None else ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_village">Village</label>
+              <input type="text" id="f_village" name="village" value="{html.escape(str(prop.get('village') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_mandal">Mandal</label>
+              <input type="text" id="f_mandal" name="mandal" value="{html.escape(str(prop.get('mandal') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_district">District</label>
+              <input type="text" id="f_district" name="district" value="{html.escape(str(prop.get('district') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_stamp_no">Stamp Serial Number</label>
+              <input type="text" id="f_stamp_no" name="stamp_number" value="{html.escape(str(stamp.get('stamp_number') or payload_data.get('stamp_number') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_stamp_val">Stamp Value</label>
+              <input type="text" id="f_stamp_val" name="stamp_value" value="{html.escape(str(stamp.get('stamp_value') if stamp.get('stamp_value') is not None else (payload_data.get('stamp_value') if payload_data.get('stamp_value') is not None else '')))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_sold_to">Stamp Sold To</label>
+              <input type="text" id="f_sold_to" name="sold_to" value="{html.escape(str(stamp.get('sold_to') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_doc_date">Document Date</label>
+              <input type="text" id="f_doc_date" name="document_date" value="{html.escape(str(payload_data.get('document_date') or ''))}">
+            </div>
+            <div class="editor-field">
+              <label for="f_exec_date">Execution Date</label>
+              <input type="text" id="f_exec_date" name="execution_date" value="{html.escape(str(payload_data.get('execution_date') or ''))}">
+            </div>
+            <div class="editor-field efull">
+              <label for="f_parties">Parties (JSON)</label>
+              <textarea id="f_parties" name="parties_json" rows="3">{html.escape(parties_json_str)}</textarea>
+            </div>
+          </div>
+          {action_buttons}
+        </form>
+      </div>
+    </section>
+    """
+
+
+def _cert_panel(record: dict, host_name: str) -> str:
+    rec_id = record["verification_id"]
+    payload_data = record["document_payload"]
+    prop = payload_data.get("property", {}) or {}
+    parties = payload_data.get("parties", []) or []
+    sig = record.get("signature", "")
+    pub_key = record.get("public_key", "")
+
+    sig_valid = False
+    if sig and pub_key:
+        sig_valid = verification_service.verify_document_signature(payload_data, sig, pub_key)
+    sig_state = (
+        '<p class="sig-state">✓ Signature re-verified against the record at render time.</p>'
+        if sig_valid
+        else '<p class="sig-state bad">✗ Signature check FAILED at render time.</p>'
+    )
+
+    parties_rows = "".join(
+        f"<li>{html.escape(p.get('name') or '')} <em style=\"color:var(--ink-soft);\">({html.escape(p.get('role') or '')})</em></li>"
+        for p in parties
+        if isinstance(p, dict)
+    )
+    verify_url = f"http://{host_name}/?verification_id={rec_id}"
+
+    return f"""
+    <section class="panel cert rv">
+      <div class="tab t-green"><span>Schedule C · Certificate of Seal</span><em>{html.escape(record.get('approved_at') or '')}</em></div>
+      <div class="cert-body">
+        <div>
+          <div class="fact"><b>Verification ID</b><span class="v" style="font-family:var(--type);font-weight:400;">{html.escape(rec_id)}</span></div>
+          <div class="fact"><b>Document Type</b><span class="v">{html.escape(payload_data.get('document_type') or '')}</span></div>
+          <div class="fact"><b>Document Number</b><span class="v">{html.escape(payload_data.get('document_number') or '')}</span></div>
+          <div class="fact"><b>Survey Number</b><span class="v">{html.escape(str(prop.get('survey_number') or ''))}</span></div>
+          <div class="fact"><b>Area</b><span class="v">{html.escape(str(prop.get('area') or ''))}</span></div>
+          <div class="fact"><b>Village</b><span class="v">{html.escape(prop.get('village') or '')}</span></div>
+          <div class="fact"><b>District</b><span class="v">{html.escape(prop.get('district') or '')}</span></div>
+          <div class="fact"><b>Document Date</b><span class="v">{html.escape(payload_data.get('document_date') or '')}</span></div>
+          <div class="fact"><b>Execution Date</b><span class="v">{html.escape(payload_data.get('execution_date') or '')}</span></div>
+          <div class="fact"><b>Parties</b><ul>{parties_rows}</ul></div>
+
+          <p class="crypto-h">Cryptographic Security</p>
+          <p class="crypto-line"><strong>Algorithm:</strong> RSA-PSS / SHA-256, keypair held in <span style="font-family:var(--type);">verification_keys/</span></p>
+          {sig_state}
+          <div class="sigbox">{html.escape(sig)}</div>
+        </div>
+
+        <div class="seal-side">
+          <div class="seal-wrap">
+            <svg class="big-seal" viewBox="0 0 340 340" aria-hidden="true">
+              <g fill="none" stroke="#C9A227">
+                <circle cx="170" cy="170" r="160" stroke-width="3"/>
+                <circle cx="170" cy="170" r="150" stroke-width="1.2" stroke-dasharray="4 6"/>
+                <circle cx="170" cy="170" r="120" stroke-width="2"/>
+                <circle cx="170" cy="170" r="112" stroke-width="1" stroke-dasharray="2 4"/>
+                <circle cx="170" cy="170" r="74" stroke-width="1.4"/>
+              </g>
+              <path id="certSealTop" d="M 170 170 m -134 0 a 134 134 0 1 1 268 0" fill="none"/>
+              <path id="certSealBot" d="M 170 170 m -134 0 a 134 134 0 1 0 268 0" fill="none"/>
+              <text font-family="Courier Prime, monospace" font-size="15" letter-spacing="6" fill="#C9A227">
+                <textPath href="#certSealTop" startOffset="6%">CANONICAL · SHA-256</textPath>
+              </text>
+              <text font-family="Courier Prime, monospace" font-size="15" letter-spacing="6" fill="#C9A227">
+                <textPath href="#certSealBot" startOffset="15%">RSA-PSS · 2048 · LOCAL</textPath>
+              </text>
+              <g fill="#C9A227">
+                <circle cx="170" cy="110" r="4"/><circle cx="230" cy="170" r="4"/>
+                <circle cx="170" cy="230" r="4"/><circle cx="110" cy="170" r="4"/>
+              </g>
+            </svg>
+            <div class="seal-center"><b>Sealed</b><span>Immutably on file</span></div>
+          </div>
+
+          <div class="qrbox"><canvas id="qrCanvas" width="200" height="200" aria-label="Verification QR code"></canvas></div>
+          <p class="qrurl">{html.escape(verify_url)}</p>
+          <p class="qr-hint">Scan from any phone on the same office network: the page re-checks the signature locally, offline.</p>
+        </div>
+
+        <div class="cert-actions">
+          <a class="btn btn-ghost" href="/?verification_id={html.escape(rec_id)}">Open Public Verification Page</a>
+          <a class="btn btn-primary" href="/dashboard">Process New Document</a>
+        </div>
+      </div>
+      <script>
+        setTimeout(function() {{
+          drawQRCode('qrCanvas', '{verify_url}');
+        }}, 100);
+      </script>
+    </section>
+    """
+
+
+def _rejected_panel(record: dict) -> str:
+    rec_id = record["verification_id"]
+    reason = record.get("rejection_reason") or "No reason was recorded."
+    return f"""
+    <section class="rej rv">
+      <span class="rej-stamp">Rejected</span>
+      <h2 class="rej-head">Rejected on file</h2>
+      <div class="reason">
+        <strong>Reason recorded by the officer:</strong>
+        <p style="margin:6px 0 0 0;">{html.escape(reason)}</p>
+      </div>
+      <p class="quiet">Record {html.escape(rec_id)} · rejected at {html.escape(record.get('rejected_at') or '')} · this document was never cryptographically certified, and the rejection itself stays on the register.</p>
+      <a class="btn btn-primary" href="/dashboard">Process New Document</a>
+    </section>
+    """
+
+
 def render_page(
     payload: str = "{}",
-    message: str = "Upload a file to see the extracted JSON.",
+    message: str = "",
     preview: str = "",
+    preview_caption: str = "",
     cpu_selected: str = "",
     gpu_selected: str = "",
     colab_url_value: str = "",
     timing_info: str = "",
     active_record: dict = None,
     host_name: str = "localhost:8001",
+    stage: str = "results",
 ) -> bytes:
     colab_val = colab_url_value or get_colab_url()
     if not cpu_selected and not gpu_selected:
@@ -1456,464 +1816,139 @@ def render_page(
         else:
             cpu_selected = "selected"
             gpu_selected = ""
-    # 1. Determine Badge markup
-    badge_markup = ""
-    if active_record:
-        status = active_record.get("status", "EXTRACTED")
-        badge_markup = f'<span class="badge badge-{status.lower()}">{status.replace("_", " ")}</span>'
 
-    # 2. Determine Message markup
-    message_markup = f"<p>{message}</p>" if message else ""
+    # ---------- Intake stage: the scan-selection desk ----------
+    if stage == "upload":
+        banner = _banner_markup(message)
+        stage_markup = _upload_stage(
+            cpu_selected, gpu_selected, colab_val, banner, timing_info
+        )
+        return HTML_PAGE.substitute(
+            reg_no="REGISTER OPEN · DESK 01",
+            stage_markup=stage_markup,
+        ).encode("utf-8")
 
-    # 3. Build Console UI markup
-    console_markup = ""
+    # ---------- Results stage: everything after extraction ----------
     if active_record:
         rec_id = active_record["verification_id"]
         status = active_record["status"]
-        payload_data = active_record["document_payload"]
-        checks = active_record["checks"]
-        rejection_reason = active_record.get("rejection_reason", "")
+        reg_no = f"RECORD NO. {rec_id[:8].upper()}"
 
-        is_immutable = status in {"APPROVED"}
+        head = f"""
+        <div class="console-top">
+          <div class="console-head rv">
+            <h1>Verification <em>Console</em></h1>
+            {_badge_markup(status)}
+          </div>
+          <p class="sub rv">Record {html.escape(rec_id)}</p>
+          {_stepper_markup(status)}
+          {_banner_markup(message, blocked=("Approval refused" in (message or "")))}
+          {timing_info}
+        </div>
+        """
 
-        # Render layout based on status
+        body_parts = []
         if status == "APPROVED":
-            sig = active_record.get("signature", "")
-            pub_key = active_record.get("public_key", "")
-            sig_valid = False
-            if sig and pub_key:
-                sig_valid = verification_service.verify_document_signature(
-                    payload_data, sig, pub_key
-                )
-            sig_result_text = (
-                '<div style="color: #16a34a; font-weight: bold; font-size: 16px; margin-top: 8px;">✓ DOCUMENT SIGNATURE VALID</div>'
-                if sig_valid
-                else '<div style="color: #dc2626; font-weight: bold; font-size: 16px; margin-top: 8px;">✗ DOCUMENT SIGNATURE INVALID</div>'
-            )
-
-            prop = payload_data.get("property", {}) or {}
-            parties = payload_data.get("parties", []) or []
-            parties_html = ""
-            for p in parties:
-                if isinstance(p, dict):
-                    parties_html += f"<li>{html.escape(p.get('name') or '')} ({html.escape(p.get('role') or '')})</li>"
-
-            # Determine port and LAN host for cross-device network verification
-            port = "8001"
-            if ":" in str(host_name):
-                port = str(host_name).split(":")[-1]
-            lan_ip = get_lan_ip()
-            lan_host = f"{lan_ip}:{port}" if lan_ip != "127.0.0.1" else host_name
-
-            lan_verification_url = f"http://{lan_host}/?verification_id={rec_id}"
-            local_verification_url = f"http://localhost:{port}/?verification_id={rec_id}"
-
-            public_tunnel = get_public_tunnel_url()
-            if public_tunnel:
-                public_verification_url = f"{public_tunnel}/?verification_id={rec_id}"
-                # Target the public tunnel URL for QR code so scanning on ANY phone works 100% without Wi-Fi router / firewall blocks
-                qr_target_url = public_verification_url
-                public_link_html = f"""
-                  <a href="{public_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 13px; font-family: monospace; font-weight: 700; color: #15803d; background: #f0fdf4; border: 1.5px solid #86efac; padding: 10px 14px; border-radius: 10px; text-decoration: none; word-break: break-all;">
-                    📱 Mobile Link (Works on Any Phone / Any Wi-Fi): {public_verification_url}
-                  </a>
-                """
-            else:
-                public_link_html = ""
-                qr_target_url = lan_verification_url if lan_ip != "127.0.0.1" else local_verification_url
-
-            qr_b64 = generate_qr_base64(qr_target_url)
-            if qr_b64:
-                qr_media_html = f'<img src="data:image/png;base64,{qr_b64}" alt="Verification QR Code" style="width: 190px; height: 190px; border-radius: 14px; border: 2px solid #cbd5e1; background: white; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); display: block; margin: 0 auto;">'
-            else:
-                qr_media_html = f'<canvas id="qrCanvas" class="qr-code-canvas"></canvas><script>setTimeout(function() {{ drawQRCode("qrCanvas", "{qr_target_url}"); }}, 100);</script>'
-
-            console_markup = f"""
-            <div style="background: #fafaf9; border: 3px double var(--accent-2); border-radius: 20px; padding: 30px; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
-              <div class="cert-seal">Official Seal</div>
-              <h2 style="color: var(--accent-2); border-bottom: 2px solid var(--accent-2); padding-bottom: 10px; margin-bottom: 20px;">✓ DOCUMENT APPROVED</h2>
-              
-              <div style="display: grid; gap: 12px; margin-bottom: 20px; font-size: 14px;">
-                <div class="cert-field"><strong>Verification ID:</strong> <span style="font-family: monospace;">{rec_id}</span></div>
-                <div class="cert-field"><strong>Approval Timestamp:</strong> {active_record.get('approved_at', '')}</div>
-                <div class="cert-field"><strong>Document Type:</strong> {html.escape(payload_data.get('document_type') or '')}</div>
-                <div class="cert-field"><strong>Document Number:</strong> {html.escape(payload_data.get('document_number') or '')}</div>
-                <div class="cert-field"><strong>Property Survey:</strong> {html.escape(prop.get('survey_number') or '')}</div>
-                <div class="cert-field"><strong>Property Area:</strong> {html.escape(str(prop.get('area') or ''))}</div>
-                <div class="cert-field"><strong>Village:</strong> {html.escape(prop.get('village') or '')}</div>
-                <div class="cert-field"><strong>District:</strong> {html.escape(prop.get('district') or '')}</div>
-                <div class="cert-field"><strong>Parties Involved:</strong>
-                  <ul style="margin: 4px 0 0 20px; padding: 0;">{parties_html}</ul>
-                </div>
-                <div class="cert-field"><strong>Document Date:</strong> {html.escape(payload_data.get('document_date') or '')}</div>
-                <div class="cert-field"><strong>Execution Date:</strong> {html.escape(payload_data.get('execution_date') or '')}</div>
-              </div>
-
-              <h3 style="color: var(--accent); border-top: 1px solid var(--border); padding-top: 15px; margin-top: 20px; font-size: 16px;">CRYPTOGRAPHIC SECURITY</h3>
-              <div style="margin-bottom: 10px; font-size: 14px;"><strong>Algorithm:</strong> RSA-PSS / SHA-256</div>
-              <div style="margin-bottom: 10px; font-size: 14px;"><strong>Signature Status:</strong> {sig_result_text}</div>
-
-              <div class="qr-container" style="flex-direction: column; align-items: center; text-align: center; padding: 24px; background: #ffffff; border-radius: 16px; border: 1px dashed var(--border);">
-                <h3 style="margin-top: 0; color: var(--accent); font-size: 16px; letter-spacing: 0.5px;">SCAN TO VERIFY</h3>
-                {qr_media_html}
-                <div style="margin-top: 14px; width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; align-items: center;">
-                  <p style="margin: 0; font-size: 13px; color: var(--muted);">Click a link below to verify directly, or scan the QR code from any phone:</p>
-                  
-                  {public_link_html}
-
-                  <a href="{lan_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 13px; font-family: monospace; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1.5px solid #bae6fd; padding: 10px 14px; border-radius: 10px; text-decoration: none; word-break: break-all;">
-                    🌐 Direct LAN Link: {lan_verification_url}
-                  </a>
-
-                  <a href="{local_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 12px; font-family: monospace; font-weight: 600; color: #475569; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; text-decoration: none; word-break: break-all;">
-                    💻 Localhost Link: {local_verification_url}
-                  </a>
-
-                  <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--muted); font-style: italic;">
-                    Mobile link works across all devices, cellular data, and Wi-Fi networks.
-                  </p>
-                </div>
-              </div>
-
-              <div style="margin-top: 25px; text-align: center; display: flex; gap: 12px; justify-content: center;">
-                <a href="/?verification_id={rec_id}" class="btn btn-secondary">Verify Again</a>
-                <a href="/" class="btn btn-primary">Process New Document</a>
-              </div>
-            </div>
-            """
-
+            body_parts.append(_cert_panel(active_record, host_name))
         elif status == "REJECTED":
-            console_markup = f"""
-            <div style="background: #fff5f5; border: 2px solid var(--status-rejected); border-radius: 20px; padding: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
-              <h2 style="color: var(--status-rejected); border-bottom: 2px solid var(--status-rejected); padding-bottom: 10px; margin-bottom: 20px;">✗ DOCUMENT REJECTED</h2>
-              
-              <div style="background: #fee2e2; border: 1.5px solid #fca5a5; padding: 16px; border-radius: 14px; margin-bottom: 20px; color: #991b1b;">
-                <strong>Rejection Reason:</strong>
-                <p style="margin: 6px 0 0 0; font-size: 14px;">{html.escape(rejection_reason or 'No reason provided.')}</p>
-              </div>
-
-              <div style="display: grid; gap: 12px; margin-bottom: 20px; font-size: 14px;">
-                <div class="cert-field"><strong>Verification ID:</strong> <span style="font-family: monospace;">{rec_id}</span></div>
-                <div class="cert-field"><strong>Rejected At:</strong> {active_record.get('rejected_at', '')}</div>
-              </div>
-              
-              <div style="padding: 12px; background: #f3f4f6; border-radius: 10px; font-size: 14px; color: var(--muted); margin-bottom: 20px; text-align: center;">
-                This document was not cryptographically certified.
-              </div>
-
-              <div style="margin-top: 25px; text-align: center; display: flex; gap: 12px; justify-content: center;">
-                <a href="/" class="btn btn-primary">Process New Document</a>
-              </div>
-            </div>
-            """
-
+            body_parts.append(_rejected_panel(active_record))
         else:
-            # Build automated checklist output
-            check_items_html = ""
-            for c in checks:
-                chk_id = c.get("check_id")
-                chk_status = c.get("status", "PASS")
-                chk_name = c.get("name", "")
-                chk_msg = c.get("message", "")
+            checks = active_record.get("checks", [])
+            payload_data = active_record["document_payload"]
 
-                if chk_id == "geographic_consistency":
+            # GIS re-check mirrors the geographic_consistency check live
+            for c in checks:
+                if c.get("check_id") == "geographic_consistency":
                     try:
                         gis_res = gis_service.verify_gis_location(payload_data)
                         auth_val = gis_res.get("authority_validation", {})
                         h_status = auth_val.get("hierarchy_status", "PARTIAL")
-
                         if h_status == "CONSISTENT" and auth_val.get("state_registry_status") == "VALIDATED":
-                            chk_status = "PASS"
+                            c["status"] = "PASS"
                         elif h_status in ("CONTRADICTORY", "AMBIGUOUS", "PARTIAL", "NOT_FOUND"):
-                            chk_status = "WARNING"
-
-                        chk_msg = f"State Authority: VALIDATED via {gis_res.get('source_attribution', 'State Registry')}."
+                            c["status"] = "WARNING"
+                        c["message"] = f"State Authority: VALIDATED via {gis_res.get('source_attribution', 'State Registry')}."
                     except Exception:
                         pass
 
-                icon = "✓" if chk_status == "PASS" else "⚠" if chk_status == "WARNING" else "✗"
-                check_items_html += f"""
-                <div class="check-item">
-                  <span class="check-status-icon status-{chk_status}">{icon}</span>
-                  <div>
-                    <p class="check-title">{html.escape(chk_name)} ({chk_status})</p>
-                    <p class="check-desc">{html.escape(chk_msg)}</p>
-                  </div>
-                </div>
-                """
+            # 1. Schedule A: Machine Checklist (Full width above the split review console)
+            body_parts.append(_checklist_panel(checks))
 
-            # Form fields setup
-            prop = payload_data.get("property", {}) or {}
-            stamp = payload_data.get("stamp_information", {}) or {}
-            parties = payload_data.get("parties", []) or []
+            # 2. Main 2-Column Split Console:
+            # LEFT SIDE: Document Scan Copy (Exhibit)
+            # RIGHT SIDE: Schedule B · Clerk Review Editor Form
+            if preview:
+                body_parts.append(
+                    '<div class="console-grid">'
+                    + '<div class="exhibit-col">' + _exhibit_panel(preview, preview_caption) + '</div>'
+                    + '<div class="clerk-col">' + _clerk_panel(active_record, message or "") + '</div>'
+                    + '</div>'
+                )
+            else:
+                body_parts.append(_clerk_panel(active_record, message or ""))
 
-            parties_json_str = json.dumps(parties)
-            disabled_attr = "disabled" if is_immutable else ""
-
-            # Rerun verification checks to detect critical failures
-            has_critical_fail = any(
-                c.get("status") == "FAIL" and c.get("severity") == "critical"
-                for c in checks
+        # 3. SEPARATE SECTION BELOW: GIS Property Location & Map
+        ocr_payload = active_record.get("document_payload") or {}
+        gis_markup = render_gis_section(ocr_payload) if ocr_payload else ""
+        if gis_markup:
+            body_parts.append(
+                '<div class="gis-separate-section" style="margin-top: 36px; padding-top: 24px; border-top: 2px double var(--rule);">'
+                + gis_markup
+                + '</div>'
             )
 
-            if has_critical_fail:
-                approval_warning = f"""
-                <div style="background: #fef2f2; border: 1.5px solid #fca5a5; padding: 12px; border-radius: 10px; color: #991b1b; font-size: 13px; font-weight: bold; margin-top: 15px; margin-bottom: 15px; width: 100%;">
-                  ⚠ Officer Approve is disabled because critical validation checks failed. Please correct details and Save Corrections.
-                </div>
-                """
-                approve_button_disabled = "disabled"
-            else:
-                approval_warning = f"""
-                <div style="background: #f0fdf4; border: 1.5px solid #bbf7d0; padding: 12px; border-radius: 10px; color: #166534; font-size: 13px; margin-top: 15px; margin-bottom: 15px; width: 100%;">
-                  Officer approval will permanently certify the reviewed document facts.
-                </div>
-                """
-                approve_button_disabled = ""
+        if payload and payload.strip() not in ("", "{}"):
+            body_parts.append(
+                f'<details class="raw rv"><summary><span>Payload · Raw JSON</span></summary>'
+                f"<pre>{html.escape(payload)}</pre></details>"
+            )
 
-            # Action panel controls
-            action_buttons = ""
-            if not is_immutable:
-                action_buttons = f"""
-                <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
-                  <button type="submit" name="action" value="correct" class="btn btn-secondary" style="align-self: flex-start;">Save Corrections</button>
-                  {approval_warning}
-                  <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; width: 100%;">
-                    <button type="submit" name="action" value="approve" class="btn btn-success" {approve_button_disabled}>Officer Approve</button>
-                    <div style="flex-grow: 1;"></div>
-                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                      <input type="text" name="rejection_reason" id="rejection_reason" placeholder="Rejection Reason" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border);">
-                      <button type="submit" name="action" value="reject" class="btn btn-danger" onclick="if(!document.getElementById('rejection_reason').value.trim()) {{ alert('Please provide a rejection reason.'); return false; }}">Officer Reject</button>
-                    </div>
-                  </div>
-                </div>
-                """
+        stage_markup = head + "".join(body_parts)
+        return HTML_PAGE.substitute(
+            reg_no=reg_no,
+            stage_markup=stage_markup,
+        ).encode("utf-8")
 
-            blocked_banner_markup = ""
-            if message and "Approval refused" in message:
-                blocked_banner_markup = f"""
-                <div style="background: #fee2e2; border: 1.5px solid #fca5a5; padding: 16px; border-radius: 14px; margin-bottom: 20px; color: #991b1b; font-weight: bold; font-size: 15px;">
-                  Approval blocked — please resolve the following checks:
-                </div>
-                """
-
-            console_markup = f"""
-            <div style="background: rgba(31, 41, 55, 0.02); padding: 20px; border-radius: 18px; border: 1.5px solid var(--border); margin-bottom: 24px;">
-              <div style="font-size: 14px; margin-bottom: 16px; color: var(--muted);">
-                <strong>Verification ID:</strong> <span style="font-family: monospace;">{rec_id}</span>
-              </div>
-              
-              {blocked_banner_markup}
-
-              <!-- STEP 1: AUTOMATED VERIFICATION -->
-              <h3 style="margin-top: 0; margin-bottom: 12px; color: var(--accent);">Stage 1 — Automated Verification</h3>
-              <div class="checklist">
-                {check_items_html}
-              </div>
-
-              <!-- STEP 2: CLERK REVIEW & CORRECTION -->
-              <h3 style="margin-bottom: 4px; color: var(--accent);">Stage 2 — Clerk Review (Correct Fields)</h3>
-              <p style="margin: 0 0 16px 0; font-size: 13px; color: var(--muted); font-style: italic;">
-                Review the extracted information and correct any OCR errors before approval.
-              </p>
-              <form action="/extract" method="post" enctype="multipart/form-data">
-                <input type="hidden" name="verification_id" value="{rec_id}">
-                
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Document Type:</label>
-                    <input type="text" name="document_type" value="{html.escape(str(payload_data.get('document_type') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Document Number:</label>
-                    <input type="text" name="document_number" value="{html.escape(str(payload_data.get('document_number') or ''))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Survey Number:</label>
-                    <input type="text" name="survey_number" value="{html.escape(str(prop.get('survey_number') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Sub-Survey Number:</label>
-                    <input type="text" name="sub_survey_number" value="{html.escape(str(prop.get('sub_survey_number') or ''))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Property Area:</label>
-                    <input type="text" name="area" value="{html.escape(str(prop.get('area') if prop.get('area') is not None else ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Village:</label>
-                    <input type="text" name="village" value="{html.escape(str(prop.get('village') or ''))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Mandal:</label>
-                    <input type="text" name="mandal" value="{html.escape(str(prop.get('mandal') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>District:</label>
-                    <input type="text" name="district" value="{html.escape(str(prop.get('district') or ''))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Stamp Serial Number:</label>
-                    <input type="text" name="stamp_number" value="{html.escape(str(stamp.get('stamp_number') or payload_data.get('stamp_number') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Stamp Value:</label>
-                    <input type="text" name="stamp_value" value="{html.escape(str(stamp.get('stamp_value') if stamp.get('stamp_value') is not None else (payload_data.get('stamp_value') if payload_data.get('stamp_value') is not None else '')))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Stamp Sold To:</label>
-                    <input type="text" name="sold_to" value="{html.escape(str(stamp.get('sold_to') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Parties List (JSON):</label>
-                    <textarea name="parties_json" rows="3" style="font-family: monospace; font-size: 12px;" {disabled_attr}>{html.escape(parties_json_str)}</textarea>
-                  </div>
-                </div>
-
-                <div class="editor-group">
-                  <div class="editor-field">
-                    <label>Document Date:</label>
-                    <input type="text" name="document_date" value="{html.escape(str(payload_data.get('document_date') or ''))}" {disabled_attr}>
-                  </div>
-                  <div class="editor-field">
-                    <label>Execution Date:</label>
-                    <input type="text" name="execution_date" value="{html.escape(str(payload_data.get('execution_date') or ''))}" {disabled_attr}>
-                  </div>
-                </div>
-
-                <div class="action-panel">
-                  {action_buttons}
-                </div>
-              </form>
-            </div>
-            """
-
-    raw_payload_section = f"""
-    <div class="card" style="margin-top: 24px; padding: 20px;">
-      <h3 style="margin-top: 0; color: var(--muted); font-size: 16px;">Raw Document JSON</h3>
-      <pre style="max-height: 250px;">{html.escape(payload)}</pre>
-    </div>
-    """
-
-    steps_markup = ""
-    if active_record:
-        status = active_record.get("status", "EXTRACTED")
-        s1 = "completed"
-        s2 = "pending"
-        s3 = "pending"
-        s4 = "pending"
-        s5 = "pending"
-        
-        if status == "EXTRACTED":
-            s1 = "active"
-        elif status == "NEEDS_REVIEW":
-            s2 = "active"
-        elif status in {"READY_FOR_APPROVAL", "READY"}:
-            s2 = "completed"
-            s3 = "completed"
-            s4 = "active"
-        elif status == "APPROVED":
-            s2 = "completed"
-            s3 = "completed"
-            s4 = "completed"
-            s5 = "completed"
-        elif status == "REJECTED":
-            s2 = "completed"
-            s3 = "completed"
-            s4 = "rejected"
-            s5 = "rejected"
-
-        s5_label = "Certified"
-        if status == "REJECTED":
-            s5_label = "Rejected"
-            
-        steps_markup = f"""
-        <div class="steps-container">
-          <div class="step-item {s1}">
-            <div class="step-dot">1</div>
-            <div class="step-label">Extracted</div>
-          </div>
-          <div class="step-item {s2}">
-            <div class="step-dot">2</div>
-            <div class="step-label">Clerk Review</div>
-          </div>
-          <div class="step-item {s3}">
-            <div class="step-dot">3</div>
-            <div class="step-label">Automated Verify</div>
-          </div>
-          <div class="step-item {s4}">
-            <div class="step-dot">4</div>
-            <div class="step-label">Officer Decision</div>
-          </div>
-          <div class="step-item {s5}">
-            <div class="step-dot">5</div>
-            <div class="step-label">{s5_label}</div>
-          </div>
-        </div>
-        """
-
-    # 4. Generate GIS Property-Location Verification markup
-    ocr_payload = {}
-    if active_record and active_record.get("document_payload"):
-        ocr_payload = active_record.get("document_payload")
-    elif payload and payload.strip() and payload.strip() != "{}":
-        try:
-            ocr_payload = json.loads(payload)
-        except Exception:
-            ocr_payload = {}
-
-    gis_markup = render_gis_section(ocr_payload) if ocr_payload else ""
-
+    # ---------- Results stage without a record (extraction failure) ----------
+    # Falls back to the intake desk with the error banner and docket on top.
+    banner = _banner_markup(message or "Extraction failed.", blocked=True)
+    stage_markup = _upload_stage(
+        cpu_selected, gpu_selected, colab_val, banner, timing_info
+    )
     return HTML_PAGE.substitute(
-        payload=payload,
-        message=message,
-        preview=preview or "<p>No image uploaded yet.</p>",
-        cpu_selected=cpu_selected,
-        gpu_selected=gpu_selected,
-        colab_url_value=colab_url_value or os.environ.get("COLAB_OCR_URL", ""),
-        timing_info=timing_info,
-        badge_markup=badge_markup,
-        message_markup=message_markup,
-        console_markup=console_markup,
-        gis_markup=gis_markup,
-        steps_markup=steps_markup,
-        raw_json_markup=raw_payload_section,
+        reg_no="REGISTER OPEN · DESK 01",
+        stage_markup=stage_markup,
     ).encode("utf-8")
 
 
 def render_verification_view(record: dict, sig_valid: bool) -> bytes:
-    """Renders a simple standalone landing page for public verification checks."""
+    """Renders the standalone public verification page (MUHAR register theme).
+
+    This is the page a phone lands on after scanning the certificate QR:
+    it recomputes the signature check server-side and stamps the verdict.
+    """
     rec_id = record["verification_id"]
     status = record["status"]
     payload_data = record["document_payload"]
     prop = payload_data.get("property", {}) or {}
     parties = payload_data.get("parties", []) or []
 
-    sig_html = (
-        '<div style="color: #16a34a; font-weight: bold; font-size: 20px; border: 2px solid #16a34a; padding: 12px; border-radius: 12px; background: #f0fdf4; margin-bottom: 20px; text-align: center;">✓ DOCUMENT SIGNATURE VALID</div>'
-        if sig_valid
-        else '<div style="color: #dc2626; font-weight: bold; font-size: 20px; border: 2px solid #dc2626; padding: 12px; border-radius: 12px; background: #fef2f2; margin-bottom: 20px; text-align: center;">✗ DOCUMENT SIGNATURE INVALID</div>'
-    )
+    if sig_valid:
+        verdict = """
+        <div class="verdict ok">✓ Signature Valid</div>
+        <p class="verdict-note">Recomputed over the canonical record fields with the office's RSA-PSS public key.</p>
+        """
+    else:
+        verdict = """
+        <div class="verdict bad">✗ Signature Invalid</div>
+        <p class="verdict-note bad">This record does not match its seal. Treat the document as tampered or unsealed.</p>
+        """
 
-    parties_html = ""
-    for p in parties:
-        if isinstance(p, dict):
-            parties_html += f"<li>{html.escape(p.get('name') or '')} ({html.escape(p.get('role') or '')})</li>"
+    parties_rows = "".join(
+        f"<li>{html.escape(p.get('name') or '')} <em style=\"color:var(--ink-soft);\">({html.escape(p.get('role') or '')})</em></li>"
+        for p in parties
+        if isinstance(p, dict)
+    )
 
     gis_html = render_gis_section(payload_data)
 
@@ -1922,75 +1957,176 @@ def render_verification_view(record: dict, sig_valid: bool) -> bytes:
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>Registry Land Record Verification</title>
+      <title>MUHAR — Record Verification</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Archivo:wght@400;500;600;700&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
       <style>
-        body {{
-          background: #f4efe6;
-          color: #1f2937;
-          font-family: system-ui, sans-serif;
-          padding: 40px 20px;
+        :root{{
+          --paper:#F6F0E1; --paper-deep:#EFE6D0; --ink:#221D17; --ink-soft:#5A5142;
+          --stamp:#A6193C; --stamp-deep:#7C1030; --rosette:#C99AA8; --green:#2E6B4F;
+          --amber:#A96A1F; --rule:#C9BC9F; --rule-soft:#DCD2B8; --card:#FFFDF6;
+          --serif:"Fraunces",Georgia,serif;
+          --type:"Courier Prime","Courier New",monospace;
+          --sans:"Archivo",system-ui,sans-serif;
         }}
-        .card {{
-          max-width: 720px;
-          margin: 0 auto;
-          background: #fffaf2;
-          border: 1px solid #dccfb8;
-          border-radius: 20px;
-          padding: 30px;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+        *{{margin:0;padding:0;box-sizing:border-box}}
+        body{{
+          background:var(--paper);color:var(--ink);font-family:var(--sans);
+          font-size:16px;line-height:1.6;padding:0 0 56px;
         }}
-        h1 {{ color: #7c2d12; border-bottom: 2px solid #dccfb8; padding-bottom: 10px; margin-top: 0; text-align: center; }}
-        h2 {{ color: #14532d; font-size: 18px; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-top: 24px; }}
-        .field {{ margin-bottom: 12px; font-size: 14px; line-height: 1.6; }}
-        .field strong {{ display: inline-block; width: 180px; color: #4b5563; }}
-        .sig {{ font-family: monospace; font-size: 11px; word-break: break-all; background: #e2e8f0; padding: 10px; border-radius: 8px; max-height: 80px; overflow-y: auto; }}
-        .badge {{ display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: bold; text-transform: uppercase; font-size: 12px; }}
-        .badge-approved {{ background: #d1fae5; color: #065f46; border: 1.5px solid #a7f3d0; }}
-        .badge-rejected {{ background: #fee2e2; color: #991b1b; border: 1.5px solid #fca5a5; }}
-        .btn {{ display: inline-block; padding: 10px 20px; background: #7c2d12; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }}
+        ::selection{{background:var(--stamp);color:var(--paper)}}
+        .security-bg{{
+          position:fixed;inset:0;z-index:0;pointer-events:none;
+          background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420' viewBox='0 0 420 420'%3E%3Cg fill='none' stroke='%23C99AA8' stroke-width='1' opacity='.33'%3E%3Ccircle cx='210' cy='210' r='196'/%3E%3Ccircle cx='210' cy='210' r='188' stroke-dasharray='3 6'/%3E%3Ccircle cx='210' cy='210' r='172'/%3E%3Ccircle cx='210' cy='210' r='164' stroke-dasharray='10 4'/%3E%3Ccircle cx='210' cy='210' r='148'/%3E%3Ccircle cx='210' cy='210' r='140' stroke-dasharray='2 5'/%3E%3Ccircle cx='210' cy='210' r='124'/%3E%3Ccircle cx='210' cy='210' r='116' stroke-dasharray='8 5'/%3E%3Ccircle cx='210' cy='210' r='100'/%3E%3Ccircle cx='210' cy='210' r='92' stroke-dasharray='4 4'/%3E%3Ccircle cx='210' cy='210' r='76'/%3E%3Ccircle cx='210' cy='210' r='68' stroke-dasharray='12 3'/%3E%3Ccircle cx='210' cy='210' r='52'/%3E%3Ccircle cx='210' cy='210' r='44'/%3E%3Ccircle cx='210' cy='210' r='36' stroke-dasharray='3 4'/%3E%3Ccircle cx='210' cy='210' r='20'/%3E%3C/g%3E%3C/svg%3E");
+          background-size:420px 420px;opacity:.5;
+        }}
+        .page{{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:0 22px}}
+        .perf{{
+          height:26px;width:100%;
+          background-image:radial-gradient(circle at 13px 13px, var(--paper) 6px, transparent 7px);
+          background-size:26px 26px;background-position:center top;
+        }}
+        .perf.bottom{{background-position:center bottom}}
+        header{{border-bottom:3px double var(--rule);margin-bottom:40px}}
+        .reg-bar{{display:flex;align-items:center;justify-content:space-between;padding:20px 0;gap:20px}}
+        .brand{{display:flex;align-items:baseline;gap:12px;text-decoration:none;color:var(--ink)}}
+        .brand b{{font-family:var(--serif);font-weight:900;font-size:26px;letter-spacing:.04em}}
+        .brand span{{font-family:var(--type);font-size:11px;letter-spacing:.18em;color:var(--stamp);text-transform:uppercase}}
+        .reg-no{{font-family:var(--type);font-size:11px;color:var(--ink-soft);letter-spacing:.12em}}
+        .panel{{border:1.5px solid var(--ink);background:rgba(255,255,255,.6);margin-bottom:28px}}
+        .panel .tab{{
+          font-family:var(--type);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+          background:var(--ink);color:var(--paper);padding:10px 18px;display:flex;justify-content:space-between;gap:12px;
+        }}
+        .panel .tab em{{font-style:normal;color:var(--rosette)}}
+        .panel .tab.t-green{{background:var(--green)}}
+        .panel .tab.t-red{{background:var(--stamp-deep)}}
+        .panel .body{{padding:26px}}
+        .verdict{{
+          display:inline-block;font-family:var(--serif);font-weight:900;
+          font-size:clamp(26px,6vw,40px);letter-spacing:.06em;
+          border:3px solid;padding:8px 26px;transform:rotate(-3deg);
+          filter:url(#roughen);
+        }}
+        .verdict.ok{{color:var(--green);border-color:var(--green)}}
+        .verdict.bad{{color:var(--stamp);border-color:var(--stamp)}}
+        .verdict-note{{font-family:var(--type);font-size:12px;color:var(--ink-soft);margin-top:16px}}
+        .verdict-note.bad{{color:var(--stamp-deep)}}
+        .fact{{display:flex;gap:14px;padding:9px 0;border-bottom:1px dotted var(--rule);font-size:14px;align-items:baseline}}
+        .fact:last-child{{border-bottom:0}}
+        .fact b{{font-family:var(--type);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);width:168px;flex:none;font-weight:400}}
+        .fact .v{{font-weight:600}}
+        .fact ul{{margin:0;padding-left:18px}}
+        .pill{{font-family:var(--type);font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding:4px 10px;border:1.5px solid;border-radius:2px}}
+        .pill.ok{{color:var(--green);border-color:var(--green);background:rgba(46,107,79,.08)}}
+        .pill.bad{{color:var(--stamp);border-color:var(--stamp);background:rgba(166,25,60,.08)}}
+        .crypto-h{{font-family:var(--type);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--stamp);margin:20px 0 8px}}
+        .sigbox{{
+          background:var(--paper-deep);border:1px solid var(--rule);font-family:var(--type);font-size:11px;
+          word-break:break-all;padding:10px 12px;max-height:90px;overflow:auto;line-height:1.6;
+        }}
+        footer{{border-top:3px double var(--rule);margin-top:44px;padding:28px 0 0}}
+        .foot-note{{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-family:var(--type);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}}
+        .btn{{
+          font-family:var(--type);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+          text-decoration:none;padding:12px 24px;border-radius:2px;
+          background:var(--stamp);color:var(--paper);box-shadow:3px 3px 0 var(--stamp-deep);display:inline-block;
+        }}
+        .gis{{margin-bottom:28px}}
+        .gis .attr-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}}
+        .gis .attr{{background:var(--card);border:1px solid var(--rule);padding:12px 14px}}
+        .gis .attr .k{{font-family:var(--type);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px}}
+        .gis .attr .v{{font-size:14px;font-weight:700;color:var(--ink)}}
+        .gis .authority{{background:rgba(46,107,79,.08);border:1px solid rgba(46,107,79,.35);padding:12px 14px;margin-bottom:14px}}
+        .gis .authority .k{{font-family:var(--type);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--green)}}
+        .gis .authority .v{{font-size:14px;font-weight:700;color:var(--green);margin-top:2px}}
+        .gis .authority .s{{font-size:11px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+        .gis .infonote{{background:var(--paper-deep);border-left:4px solid var(--stamp);padding:12px 16px;font-size:13.5px;color:var(--ink-soft);margin-bottom:14px}}
+        .gis .village-warn{{background:rgba(169,106,31,.1);border-left:4px solid var(--amber);padding:10px 14px;font-size:13px;color:var(--amber);margin-bottom:14px}}
+        .gis .src-note{{font-family:var(--type);font-size:11.5px;color:var(--ink-soft);font-style:italic;margin-bottom:16px}}
+        .gis .map-grid{{display:grid;grid-template-columns:1.2fr .8fr;gap:20px;align-items:start}}
+        @media(max-width:900px){{.gis .map-grid{{grid-template-columns:1fr}}}}
+        .gis #gis-map{{width:100%;height:380px;border:1.5px solid var(--rule);background:var(--paper-deep);z-index:1}}
+        .gis .legend{{font-size:12px;background:var(--card);border:1px solid var(--rule);padding:10px 14px;margin-top:10px;display:flex;flex-wrap:wrap;gap:16px;align-items:center}}
+        .gis .legend .sw{{display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:-2px}}
+        .gis .legend .lbl{{font-weight:600;color:var(--ink)}}
+        .gis .coords{{font-family:var(--type);font-size:11.5px;color:var(--ink-soft);margin-top:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}}
+        .gis .metric{{background:var(--card);border:1px solid var(--rule);padding:16px;margin-bottom:14px}}
+        .gis .metric h4{{font-family:var(--type);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--stamp);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--rule-soft)}}
+        .gis .metric p{{font-size:13px;line-height:1.6;color:var(--ink-soft);margin:0 0 6px}}
+        .gis .metric p b{{color:var(--ink)}}
+        .gis .metric .disclaimer{{font-family:var(--type);font-size:11px;color:var(--amber);background:rgba(169,106,31,.1);border:1px solid rgba(169,106,31,.3);padding:8px;margin-top:8px;font-style:italic}}
+        .gis .metric .quiet{{font-family:var(--type);font-size:11px;color:var(--ink-soft);background:var(--paper);border:1px solid var(--rule-soft);padding:8px;font-style:italic;margin-top:8px}}
       </style>
     </head>
     <body>
-      <div class="card">
-        <h1>DOCUMENT VERIFICATION</h1>
-        
-        <div class="field" style="margin-bottom: 20px; font-size: 15px; color: #4b5563;">
-          <strong>Verification ID:</strong> <span style="font-family: monospace; font-weight: bold; color: #1f2937;">{rec_id}</span>
-        </div>
 
-        <div style="margin-bottom: 24px;">
-          <h2 style="color: #7c2d12; margin-top: 0;">Signature Status</h2>
-          {sig_html}
-        </div>
+    <div class="security-bg" aria-hidden="true"></div>
 
-        <div style="border-top: 2px solid #dccfb8; padding-top: 10px;">
-          <h2>DOCUMENT FACTS</h2>
-          <div class="field"><strong>Status:</strong> <span class="badge badge-{status.lower()}">{status}</span></div>
-          <div class="field"><strong>Approved Timestamp:</strong> {record.get('approved_at', 'N/A')}</div>
-          <div class="field"><strong>Document Type:</strong> {html.escape(payload_data.get('document_type') or '')}</div>
-          <div class="field"><strong>Document Number:</strong> {html.escape(payload_data.get('document_number') or '')}</div>
-          <div class="field"><strong>Property Survey:</strong> {html.escape(prop.get('survey_number') or '')}</div>
-          <div class="field"><strong>Area:</strong> {html.escape(str(prop.get('area') or ''))}</div>
-          <div class="field"><strong>Village:</strong> {html.escape(prop.get('village') or '')}</div>
-          <div class="field"><strong>District:</strong> {html.escape(prop.get('district') or '')}</div>
-          <div class="field"><strong>Parties Involved:</strong>
-            <ul style="margin: 4px 0 0 20px; padding: 0;">{parties_html}</ul>
-          </div>
-          <div class="field"><strong>Document Date:</strong> {html.escape(payload_data.get('document_date') or '')}</div>
-          <div class="field"><strong>Execution Date:</strong> {html.escape(payload_data.get('execution_date') or '')}</div>
-        </div>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <filter id="roughen">
+        <feTurbulence type="fractalNoise" baseFrequency="0.09" numOctaves="2" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="2.5"/>
+      </filter>
+    </svg>
 
-        {gis_html}
+    <div class="perf" aria-hidden="true"></div>
+    <div class="page">
 
-        <div style="margin-top: 24px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
-          <div class="field"><strong>Digital Signature Seal:</strong></div>
-          <div class="sig">{record.get('signature', 'None')}</div>
-        </div>
+    <header>
+      <div class="reg-bar">
+        <a class="brand" href="/">
+          <b>MUHAR</b>
+          <span>मुहर &nbsp;·&nbsp; public verification</span>
+        </a>
+        <span class="reg-no">RECORD NO. {html.escape(rec_id[:8].upper())}</span>
+      </div>
+    </header>
 
-        <div style="margin-top: 20px; text-align: center;">
-          <a href="/" class="btn">← Go to Main Registry Office</a>
+    <section class="panel">
+      <div class="tab"><span>Certificate Check</span><em>{html.escape(record.get('approved_at') or 'on record')}</em></div>
+      <div class="body">
+        {verdict}
+        <div style="margin-top:22px;">
+          <div class="fact"><b>Verification ID</b><span class="v" style="font-family:var(--type);font-weight:400;">{html.escape(rec_id)}</span></div>
+          <div class="fact"><b>Register Status</b><span class="pill {'ok' if status == 'APPROVED' else 'bad'}">{html.escape(status)}</span></div>
+          <div class="fact"><b>Approved At</b><span class="v">{html.escape(record.get('approved_at') or 'not approved')}</span></div>
         </div>
       </div>
+    </section>
+
+    <section class="panel">
+      <div class="tab"><span>Document Facts</span><em>as sealed</em></div>
+      <div class="body">
+        <div class="fact"><b>Document Type</b><span class="v">{html.escape(payload_data.get('document_type') or '')}</span></div>
+        <div class="fact"><b>Document Number</b><span class="v">{html.escape(payload_data.get('document_number') or '')}</span></div>
+        <div class="fact"><b>Property Survey</b><span class="v">{html.escape(str(prop.get('survey_number') or ''))}</span></div>
+        <div class="fact"><b>Area</b><span class="v">{html.escape(str(prop.get('area') or ''))}</span></div>
+        <div class="fact"><b>Village</b><span class="v">{html.escape(prop.get('village') or '')}</span></div>
+        <div class="fact"><b>District</b><span class="v">{html.escape(prop.get('district') or '')}</span></div>
+        <div class="fact"><b>Parties</b><ul>{parties_rows}</ul></div>
+        <div class="fact"><b>Document Date</b><span class="v">{html.escape(payload_data.get('document_date') or '')}</span></div>
+        <div class="fact"><b>Execution Date</b><span class="v">{html.escape(payload_data.get('execution_date') or '')}</span></div>
+
+        <p class="crypto-h">Digital Signature Seal</p>
+        <div class="sigbox">{html.escape(record.get('signature', 'None'))}</div>
+      </div>
+    </section>
+
+    {gis_html}
+
+    <footer>
+      <div class="foot-note">
+        <span>MUHAR · Offline Registry</span>
+        <span>Signature checked on this device's request, no cloud involved</span>
+        <span><a class="btn" href="/">Registry Office</a></span>
+      </div>
+    </footer>
+
+    </div>
+    <div class="perf bottom" aria-hidden="true"></div>
+
     </body>
     </html>
     """
@@ -2002,18 +2138,34 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         query_params = parse_qs(parsed.query)
+        host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
 
-        # Standard check
-        if parsed.path not in {"/", "/index.html"}:
-            self.send_error(HTTPStatus.NOT_FOUND)
+        # Quick OCR URL update endpoint: /set_ocr_url?url=https://...
+        if parsed.path == "/set_ocr_url":
+            new_url = query_params.get("url", [None])[0]
+            if new_url:
+                new_url = new_url.strip().rstrip("/")
+                try:
+                    (Path(__file__).parent / "colab_url.txt").write_text(new_url, encoding="utf-8")
+                    global COLAB_OCR_URL
+                    COLAB_OCR_URL = new_url
+                    os.environ["COLAB_OCR_URL"] = new_url
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "url": new_url}).encode("utf-8"))
+                    return
+                except Exception as e:
+                    self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(e))
+                    return
+            self.send_error(HTTPStatus.BAD_REQUEST, "Missing url parameter")
             return
 
-        # Verification view routing
+        # Verification view routing (offline QR validation & public certificate)
         verification_id = query_params.get("verification_id", [None])[0]
-        if verification_id:
+        if verification_id and parsed.path in {"/", "/index.html", "/verify"}:
             record = verification_service.get_record(verification_id)
             if record:
-                # Dynamic Signature Validation check
                 pub_key = record.get(
                     "public_key"
                 ) or verification_service.get_public_verification_key()
@@ -2038,15 +2190,104 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND, "Verification record not found")
                 return
 
-        host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
-        page = render_page(colab_url_value=get_colab_url(), host_name=host_name)
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(page)))
-        self.end_headers()
-        self.wfile.write(page)
+        # Dashboard View: Clean, professional operations portal with sidebar & stats
+        if parsed.path == "/dashboard":
+            page = dashboard_view.render_dashboard(
+                host_name=host_name,
+                colab_url=get_colab_url(),
+            )
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+            return
+
+        # Dedicated New Scan & Document Intake desk (with persistent sidebar)
+        if parsed.path in {"/new", "/desk", "/upload"}:
+            page = dashboard_view.render_new_scan(
+                host_name=host_name,
+                colab_url=get_colab_url(),
+                message="",
+            )
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+            return
+
+        # Clerk Review & Approval Console for a specific record
+        if parsed.path == "/record":
+            record_id = query_params.get("verification_id", [None])[0]
+            record = (
+                verification_service.get_record(record_id) if record_id else None
+            )
+            if not record:
+                self.send_error(HTTPStatus.NOT_FOUND, "Verification record not found")
+                return
+            preview_html = (
+                get_preview_html(record_id)
+                or f"<p><strong>Active Verification Record:</strong> {record_id}</p>"
+            )
+            page = render_page(
+                payload=json.dumps(record, indent=2, ensure_ascii=False),
+                message="",
+                preview=preview_html,
+                colab_url_value=get_colab_url(),
+                active_record=record,
+                host_name=host_name,
+            )
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+            return
+
+        # Public Landing Page (MUHAR Design System)
+        if parsed.path in {"/", "/index.html"}:
+            landing_file = Path(__file__).parent / "01-muhar-final.html"
+            if landing_file.exists():
+                content = landing_file.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            page = render_page(colab_url_value=get_colab_url(), host_name=host_name)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+            return
+
+        self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
+        # In-memory OCR URL update API
+        if self.path == "/api/update_ocr_url":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body.decode("utf-8"))
+                new_url = data.get("url", "").strip().rstrip("/")
+                if new_url:
+                    (Path(__file__).parent / "colab_url.txt").write_text(new_url, encoding="utf-8")
+                    global COLAB_OCR_URL
+                    COLAB_OCR_URL = new_url
+                    os.environ["COLAB_OCR_URL"] = new_url
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "url": new_url}).encode("utf-8"))
+                    return
+            except Exception as e:
+                self.send_error(HTTPStatus.BAD_REQUEST, str(e))
+                return
+
         if self.path != "/extract":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -2442,18 +2683,17 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 )
 
                 mode_label = (
-                    "Digital Text Fast-Path (No OCR needed)"
+                    "Digital Text Fast-Path"
                     if gpu_name.startswith("Digital")
-                    else "Kaggle / Colab GPU (Parallel Streamed JPEG)"
+                    else "Kaggle / Colab GPU"
                 )
                 timing_info = f"""
-                <div style="background: rgba(31, 41, 55, 0.05); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); font-size: 14px; display: grid; gap: 8px;">
-                  <div><strong>Processing Mode:</strong> {mode_label}</div>
-                  <div><strong>GPU Status:</strong> <span style="color: #14532d; font-weight: bold;">✓ Connected</span></div>
-                  <div><strong>GPU Hardware:</strong> {gpu_name}</div>
-                  <div><strong>OCR Inference Time:</strong> {ocr_time_ms:.2f} ms</div>
-                  <div><strong>Network Transit Time:</strong> {network_time_ms:.2f} ms</div>
-                  <div><strong>Total Processing Time:</strong> {total_time_ms:.2f} ms</div>
+                <div class="docket rv in">
+                  <span><b>Mode</b> {mode_label}</span>
+                  <span><b>Hardware</b> {html.escape(str(gpu_name))}</span>
+                  <span><b>OCR</b> {ocr_time_ms:.2f} ms</span>
+                  <span><b>Transit</b> {network_time_ms:.2f} ms</span>
+                  <span><b>Total</b> {total_time_ms:.2f} ms</span>
                 </div>
                 """
             else:
@@ -2466,10 +2706,10 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 )
 
                 timing_info = f"""
-                <div style="background: rgba(31, 41, 55, 0.05); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); font-size: 14px; display: grid; gap: 8px;">
-                  <div><strong>Processing Mode:</strong> Local CPU</div>
-                  <div><strong>OCR Inference Time:</strong> {ocr_time_ms:.2f} ms</div>
-                  <div><strong>Total Processing Time:</strong> {total_time_ms:.2f} ms</div>
+                <div class="docket rv in">
+                  <span><b>Mode</b> Local CPU · PaddleOCR</span>
+                  <span><b>OCR</b> {ocr_time_ms:.2f} ms</span>
+                  <span><b>Total</b> {total_time_ms:.2f} ms</span>
                 </div>
                 """
 
@@ -2486,14 +2726,14 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 preview_pages_b64 = [base64.b64encode(pb[1]).decode("ascii") for pb in page_buffers]
                 total_pgs = len(preview_pages_b64)
                 pages_html = "\n".join(
-                    f'<div style="margin-bottom: 16px; text-align: center;">'
-                    f'<div style="font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: #94a3b8; margin-bottom: 6px; text-align: left; padding-left: 2px;">PAGE {idx} OF {total_pgs}</div>'
-                    f'<img src="data:image/jpeg;base64,{b64_str}" style="width: 100%; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); display: block;" alt="Document Page {idx}">'
+                    f'<div style="margin-bottom: 18px; text-align: center;">'
+                    f'<div style="font-family: var(--type); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--ink-soft); margin-bottom: 6px; text-align: left; text-transform: uppercase;">PAGE {idx} OF {total_pgs}</div>'
+                    f'<img src="data:image/jpeg;base64,{b64_str}" style="width: 100%; border: 1.5px solid var(--rule); box-shadow: 2px 2px 0 rgba(0,0,0,0.06); display: block; background: #fff;" alt="Document Page {idx}">'
                     f'</div>'
                     for idx, b64_str in enumerate(preview_pages_b64, start=1)
                 )
                 preview = f"""
-                <div style="max-height: 620px; overflow-y: auto; background: #2b2d30; border-radius: 10px; padding: 14px; border: 1px solid var(--border);">
+                <div style="min-height: 760px; max-height: calc(100vh - 140px); overflow-y: auto; background: var(--paper-deep); border: 1.5px solid var(--rule); padding: 16px;">
                   {pages_html}
                 </div>
                 """
@@ -2501,11 +2741,11 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                 mime_type = mimetypes.guess_type(filename)[0] or "image/png"
                 image_data = base64.b64encode(uploaded).decode("ascii")
                 preview = f"""
-                <div style="max-height: 540px; overflow-y: auto; text-align: center; background: #2b2d30; border-radius: 10px; padding: 12px; border: 1px solid var(--border);">
-                  <img src="data:{mime_type};base64,{image_data}" style="max-width: 100%; border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);" alt="Uploaded image preview">
+                <div style="min-height: 760px; max-height: calc(100vh - 140px); overflow-y: auto; text-align: center; background: var(--paper-deep); border: 1.5px solid var(--rule); padding: 16px;">
+                  <img src="data:{mime_type};base64,{image_data}" style="width: 100%; max-width: 100%; border: 1.5px solid var(--rule); box-shadow: 0 4px 20px rgba(0,0,0,0.12); background: #fff; display: block;" alt="Uploaded scan copy">
                 </div>
                 """
-            message = f"Processed {html.escape(filename)} successfully. Verification record created."
+            message = f"Processed {html.escape(filename)}. Verification record created and machine checklist run."
 
             if temp_path:
                 try:
@@ -2514,18 +2754,20 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     pass
 
             host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
-            full_preview_html = f"<p><strong>{html.escape(filename)}</strong></p>{preview}"
+            full_preview_html = preview
             save_preview_html(record["verification_id"], full_preview_html)
             page = render_page(
                 payload=payload,
                 message=message,
                 preview=full_preview_html,
+                preview_caption=filename,
                 cpu_selected=cpu_sel,
                 gpu_selected=gpu_sel,
                 colab_url_value=colab_url,
                 timing_info=timing_info,
                 active_record=record,
                 host_name=host_name,
+                stage="results",
             )
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2542,12 +2784,12 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
 
             timing_info = (
                 f"""
-            <div style="background: rgba(220, 38, 38, 0.08); padding: 16px; border-radius: 14px; margin-bottom: 16px; border: 1px solid #fecaca; font-size: 14px; display: grid; gap: 8px; color: #991b1b;">
-              <div><strong>Processing Mode:</strong> Kaggle / Colab GPU</div>
-              <div><strong>GPU Status:</strong> <span style="font-weight: bold;">✗ Unavailable</span></div>
-              <div><strong>Error Details:</strong> {html.escape(str(exc))}</div>
-            </div>
-            """
+                <div class="docket error rv in">
+                  <span><b>Mode</b> Remote GPU</span>
+                  <span><b>Status</b> ✗ Unavailable</span>
+                  <span><b>Error</b> {html.escape(str(exc))}</span>
+                </div>
+                """
                 if processing_mode == "gpu"
                 else ""
             )
@@ -2555,12 +2797,13 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             host_name = self.headers.get("Host", f"localhost:{self.server.server_address[1]}")
             page = render_page(
                 payload=error_payload,
-                message="Extraction failed.",
+                message="Extraction failed. Check the docket above and try again.",
                 cpu_selected=cpu_sel,
                 gpu_selected=gpu_sel,
                 colab_url_value=colab_url,
                 timing_info=timing_info,
                 host_name=host_name,
+                stage="upload",
             )
             self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
             self.send_header("Content-Type", "text/html; charset=utf-8")

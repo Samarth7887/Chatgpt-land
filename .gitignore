@@ -21,3 +21,4 @@ land_document_output.json
 verification_keys/
 verification_db.json
 scratch/
+.DS_Store
