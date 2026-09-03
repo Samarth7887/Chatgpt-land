@@ -58,6 +58,35 @@ def get_colab_url() -> str:
     return COLAB_OCR_URL.strip()
 
 
+def extract_pdf_pages_to_images(uploaded_bytes: bytes) -> list[str]:
+    """Converts a PDF file into a list of individual PNG temp file paths for per-page processing."""
+    import pypdfium2 as pdfium
+    pdf = pdfium.PdfDocument(uploaded_bytes)
+    page_paths = []
+    for page in pdf:
+        pil_img = page.render(scale=2.5).to_pil()
+        out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        pil_img.save(out_file.name, format="PNG")
+        out_file.close()
+        page_paths.append(out_file.name)
+    return page_paths
+
+
+def process_uploaded_file(uploaded_bytes: bytes, filename: str) -> str:
+    """Saves uploaded bytes to a temp file. If PDF, converts PDF pages into a single stacked PNG image."""
+    is_pdf = filename.lower().endswith(".pdf") or uploaded_bytes.startswith(b"%PDF")
+    if is_pdf:
+        out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        out_file.write(uploaded_bytes)
+        out_file.close()
+        return out_file.name
+    else:
+        suffix = Path(filename).suffix or ".png"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(uploaded_bytes)
+            return tmp.name
+
+
 # HTML Template for main app and verification console
 HTML_PAGE = Template("""<!doctype html>
 <html lang="en">
@@ -500,15 +529,15 @@ HTML_PAGE = Template("""<!doctype html>
       <section class="card upload">
         <form action="/extract" method="post" enctype="multipart/form-data">
           <div>
-            <label for="document_image" style="font-weight: 700; display: block; margin-bottom: 6px;">Select Scan Copy:</label>
-            <input type="file" name="document_image" id="document_image" accept="image/*" required>
+            <label for="document_image" style="font-weight: 700; display: block; margin-bottom: 6px;">Select Scan Copy (Image or PDF):</label>
+            <input type="file" name="document_image" id="document_image" accept="image/*,.pdf,application/pdf" required>
           </div>
           
           <div style="display: grid; gap: 6px;">
             <label for="processing_mode" style="font-weight: 700;">Processing Mode:</label>
-            <select name="processing_mode" id="processing_mode" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white;">
-              <option value="cpu" $cpu_selected>Local CPU (Pre-loaded PaddleOCR)</option>
-              <option value="gpu" $gpu_selected>Kaggle / Colab Remote Tunnel</option>
+            <select name="processing_mode" id="processing_mode" style="padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: white; font-weight: 600;">
+              <option value="gpu" $gpu_selected>⚡ Kaggle / Colab GPU Remote Tunnel (from colab_url.txt)</option>
+              <option value="cpu" $cpu_selected>🐢 Local CPU (Pre-loaded PaddleOCR)</option>
             </select>
           </div>
           
@@ -997,13 +1026,21 @@ def render_page(
     payload: str = "{}",
     message: str = "Upload a file to see the extracted JSON.",
     preview: str = "",
-    cpu_selected: str = "selected",
+    cpu_selected: str = "",
     gpu_selected: str = "",
     colab_url_value: str = "",
     timing_info: str = "",
     active_record: dict = None,
     host_name: str = "localhost:8001",
 ) -> bytes:
+    colab_val = colab_url_value or get_colab_url()
+    if not cpu_selected and not gpu_selected:
+        if colab_val:
+            gpu_selected = "selected"
+            cpu_selected = ""
+        else:
+            cpu_selected = "selected"
+            gpu_selected = ""
     # 1. Determine Badge markup
     badge_markup = ""
     if active_record:
@@ -1548,7 +1585,8 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
         parts = body.split(b"--" + boundary)
         uploaded = None
         filename = "uploaded_image"
-        processing_mode = "cpu"
+        colab_url = get_colab_url()
+        processing_mode = "gpu" if colab_url else "cpu"
 
         # Action fields parsing
         action = None
@@ -1572,7 +1610,17 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     filename = Path(match.group(1)).name
                 uploaded = val
             elif 'name="processing_mode"' in header_str:
-                processing_mode = val.decode("utf-8", errors="ignore").strip()
+                mode_str = val.decode("utf-8", errors="ignore").strip()
+                if mode_str:
+                    processing_mode = mode_str
+            elif 'name="colab_url"' in header_str:
+                url_str = val.decode("utf-8", errors="ignore").strip()
+                if url_str:
+                    colab_url = url_str.rstrip("/")
+                    try:
+                        (Path(__file__).parent / "colab_url.txt").write_text(colab_url, encoding="utf-8")
+                    except Exception:
+                        pass
             elif 'name="action"' in header_str:
                 action = val.decode("utf-8", errors="ignore").strip()
             elif 'name="verification_id"' in header_str:
@@ -1586,8 +1634,6 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     form_fields[field_name] = val.decode(
                         "utf-8", errors="ignore"
                     ).strip()
-
-        colab_url = get_colab_url()
 
         # Handle postback actions (Approve / Reject / Save Corrections)
         if action and verification_id:
@@ -1716,15 +1762,12 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "No file was uploaded")
             return
 
-        suffix = Path(filename).suffix or ".png"
         temp_path = None
         cpu_sel = "selected" if processing_mode == "cpu" else ""
         gpu_sel = "selected" if processing_mode == "gpu" else ""
 
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(uploaded)
-                temp_path = tmp.name
+            temp_path = process_uploaded_file(uploaded, filename)
 
             timing_info = ""
 
@@ -1744,47 +1787,115 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
                     )
 
                 ocr_url = f"{colab_url.rstrip('/')}/ocr"
-                t_net_start = perf_counter()
+                is_pdf_upload = filename.lower().endswith(".pdf") or uploaded.startswith(b"%PDF")
 
-                with open(temp_path, "rb") as f:
-                    ocr_resp = requests.post(ocr_url, files={"image": f}, timeout=45)
+                if is_pdf_upload:
+                    page_img_paths = extract_pdf_pages_to_images(uploaded)
+                    all_lines = []
+                    all_raw_texts = []
+                    total_ocr_time_ms = 0.0
+                    t_net_start = perf_counter()
 
-                t_net_end = perf_counter()
-                total_request_time = (t_net_end - t_net_start) * 1000
+                    for page_idx, p_path in enumerate(page_img_paths, start=1):
+                        with open(p_path, "rb") as f:
+                            ocr_resp = requests.post(ocr_url, files={"image": f}, timeout=45)
 
-                if ocr_resp.status_code != 200:
-                    try:
-                        err_msg = ocr_resp.json().get("error", ocr_resp.text)
-                    except Exception:
-                        err_msg = ocr_resp.text
-                    raise ValueError(
-                        f"Cloud GPU OCR failed with status {ocr_resp.status_code}: {err_msg}"
-                    )
+                        if ocr_resp.status_code != 200:
+                            try:
+                                err_msg = ocr_resp.json().get("error", ocr_resp.text)
+                            except Exception:
+                                err_msg = ocr_resp.text
+                            raise ValueError(
+                                f"Cloud GPU OCR failed on Page {page_idx} with status {ocr_resp.status_code}: {err_msg}"
+                            )
 
-                gpu_result = ocr_resp.json()
-                ocr_time_ms = gpu_result.get("ocr_time_ms", 0.0)
-                gpu_name = gpu_result.get("gpu_name", gpu_name)
-                network_time_ms = max(0.0, total_request_time - ocr_time_ms)
+                        gpu_result = ocr_resp.json()
+                        total_ocr_time_ms += gpu_result.get("ocr_time_ms", 0.0)
+                        gpu_name = gpu_result.get("gpu_name", gpu_name)
 
-                words = []
-                for text, score, poly in zip(
-                    gpu_result["rec_texts"],
-                    gpu_result["rec_scores"],
-                    gpu_result["rec_polys"],
-                ):
-                    cleaned = normalize_space(str(text))
-                    if not cleaned:
-                        continue
-                    words.append(
-                        OCRWord(
-                            text=cleaned,
-                            score=float(score),
-                            points=[[int(pt[0]), int(pt[1])] for pt in poly],
+                        p_words = []
+                        for text, score, poly in zip(
+                            gpu_result["rec_texts"],
+                            gpu_result["rec_scores"],
+                            gpu_result["rec_polys"],
+                        ):
+                            cleaned = normalize_space(str(text))
+                            if not cleaned:
+                                continue
+                            p_words.append(
+                                OCRWord(
+                                    text=cleaned,
+                                    score=float(score),
+                                    points=[[int(pt[0]), int(pt[1])] for pt in poly],
+                                )
+                            )
+
+                        p_lines = group_words_into_lines(p_words)
+                        # Read the page image to get dimensions for y_rel calculation
+                        from PIL import Image as _PILImage
+                        _pimg = _PILImage.open(p_path)
+                        _pw, _ph = _pimg.size
+                        for l in p_lines:
+                            l.page_num = page_idx
+                            l.page_height = _ph
+                            l.page_width = _pw
+                        all_lines.extend(p_lines)
+                        p_raw = "\n".join(l.text for l in p_lines)
+                        all_raw_texts.append(f"--- PAGE {page_idx} ---\n{p_raw}")
+
+                    t_net_end = perf_counter()
+                    total_request_time = (t_net_end - t_net_start) * 1000
+                    ocr_time_ms = total_ocr_time_ms
+                    network_time_ms = max(0.0, total_request_time - ocr_time_ms)
+                    lines = all_lines
+                    raw_text = "\n\n".join(all_raw_texts)
+                else:
+                    t_net_start = perf_counter()
+                    with open(temp_path, "rb") as f:
+                        ocr_resp = requests.post(ocr_url, files={"image": f}, timeout=45)
+                    t_net_end = perf_counter()
+                    total_request_time = (t_net_end - t_net_start) * 1000
+
+                    if ocr_resp.status_code != 200:
+                        try:
+                            err_msg = ocr_resp.json().get("error", ocr_resp.text)
+                        except Exception:
+                            err_msg = ocr_resp.text
+                        raise ValueError(
+                            f"Cloud GPU OCR failed with status {ocr_resp.status_code}: {err_msg}"
                         )
-                    )
 
-                lines = group_words_into_lines(words)
-                raw_text = "\n".join(l.text for l in lines)
+                    gpu_result = ocr_resp.json()
+                    ocr_time_ms = gpu_result.get("ocr_time_ms", 0.0)
+                    gpu_name = gpu_result.get("gpu_name", gpu_name)
+                    network_time_ms = max(0.0, total_request_time - ocr_time_ms)
+
+                    words = []
+                    for text, score, poly in zip(
+                        gpu_result["rec_texts"],
+                        gpu_result["rec_scores"],
+                        gpu_result["rec_polys"],
+                    ):
+                        cleaned = normalize_space(str(text))
+                        if not cleaned:
+                            continue
+                        words.append(
+                            OCRWord(
+                                text=cleaned,
+                                score=float(score),
+                                points=[[int(pt[0]), int(pt[1])] for pt in poly],
+                            )
+                        )
+
+                    lines = group_words_into_lines(words)
+                    # Estimate page height from max y coordinate of detected words
+                    _est_h = max((w.y_max for w in words), default=2000) + 100 if words else 2000
+                    _est_w = max((w.x_max for w in words), default=1500) + 100 if words else 1500
+                    for l in lines:
+                        l.page_num = 1
+                        l.page_height = _est_h
+                        l.page_width = _est_w
+                    raw_text = "\n".join(l.text for l in lines)
 
                 gpu_ocr_timings = {
                     "model_initialization_ms": 0.0,
@@ -1838,7 +1949,9 @@ class LandExtractorHandler(BaseHTTPRequestHandler):
             record = verification_service.create_verification_record(result)
             verification_service.save_record(record)
 
-            payload = json.dumps(result, indent=2, ensure_ascii=False)
+            from semantic_extractor import clean_user_facing_schema
+            user_facing_result = clean_user_facing_schema(result)
+            payload = json.dumps(user_facing_result, indent=2, ensure_ascii=False)
             mime_type = mimetypes.guess_type(filename)[0] or "image/png"
             image_data = base64.b64encode(uploaded).decode("ascii")
             preview = f'<img src="data:{mime_type};base64,{image_data}" alt="Uploaded image preview">'
@@ -1921,12 +2034,20 @@ def main() -> int:
     lan_ip = get_lan_ip()
     print(f"Land extractor web app running locally at http://localhost:{port}")
     print(f"Accessible on your local network/LAN at http://{lan_ip}:{port}")
+    while True:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            print(f"Server exception recovered: {exc}")
+            import time, traceback
+            traceback.print_exc()
+            time.sleep(1)
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
         server.server_close()
+    except Exception:
+        pass
     return 0
 
 

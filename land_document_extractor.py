@@ -80,10 +80,23 @@ class OCRLine:
     y_min: int
     x_max: int
     y_max: int
+    page_num: int = 1
+    page_height: int = 0
+    page_width: int = 0
 
     @property
     def y_center(self) -> float:
         return (self.y_min + self.y_max) / 2
+
+    @property
+    def y_rel(self) -> float:
+        if self.page_height > 0:
+            return self.y_center / float(self.page_height)
+        return 0.5
+
+    @property
+    def is_top_header(self) -> bool:
+        return self.page_num == 1 and self.y_rel <= 0.25
 
 
 def normalize_space(value: str) -> str:
@@ -251,18 +264,20 @@ def _date_from_labeled_text(text: str, labels: tuple[str, ...]) -> str | None:
 
 
 def parse_execution_date(text: str) -> str | None:
+    clean = re.sub(r"[_]+", " ", text)
     pattern = re.compile(
-        r"(?:EXECUT(?:ED|ION)?|ENTERED\s+INTO|MADE)\s+(?:ON\s+)?THIS\s+(?:THE\s+)?(\d{1,2})(?:ST|ND|RD|TH)?\s+DAY\s+OF\s+([A-Z]+)[\s\-/,]+(\d{4})",
+        r"(?:EXECUT(?:ED|ION)?|ENTERED\s+INTO|MADE|DEED\s+OF\s+SALE)\s+(?:ON\s+)?(?:THIS\s+)?(?:THE\s+)?(\d{1,2})(?:ST|ND|RD|TH)?\s+DAY\s+OF\s+([A-Z]+)[\s\-/,]+(\d{4})",
         re.IGNORECASE,
     )
-    match = pattern.search(text)
-    if not match:
-        return None
-    day, month_name, year = match.groups()
-    month = MONTH_LOOKUP.get(month_name.upper())
-    if not month:
-        return None
-    return f"{int(day):02d}-{month}-{year}"
+    match = pattern.search(clean)
+    if match:
+        day, month_name, year = match.groups()
+        m_upper = month_name.upper()
+        month = MONTH_LOOKUP.get(m_upper, "10" if any(k in m_upper for k in ("OCT", "ACT", "0CT")) else None)
+        if month:
+            return f"{int(day):02d}-{month}-{year}"
+
+    return None
 
 
 
@@ -294,15 +309,21 @@ def extract_document_number_from_text(text: str) -> str | None:
     clean_lines = [l for l in text.splitlines() if not any(w in l.upper() for w in ("LNO", "LICENSED", "STAMP VENDOR", "R.LNO", "RLNO", "L.NO", "LNO."))]
     search_text = "\n".join(clean_lines)
 
-    # 1. Check for explicit document number patterns
+    # 1. Handwritten / margin document number pattern e.g. "no 1736/5" or "no 12736/5" or "1736/5"
+    handwritten = re.search(r"\bNO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9A-Z]{1,4})\b", search_text, re.IGNORECASE)
+    if handwritten:
+        val = handwritten.group(1).strip().replace(" ", "")
+        return val
+
+    # 2. Check for explicit document number patterns
     pattern = re.compile(
-        r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?|SL)?\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9]{2,4})\b",
+        r"\b(?:D|DOC(?:UMENT)?|REG(?:ISTRATION)?|SL)?\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6})\s*[\/\s]\s*([0-9A-Z]{1,4})\b",
         re.IGNORECASE
     )
     match = pattern.search(search_text)
     if match:
         num, year = match.groups()
-        if len(year) == 2:
+        if len(year) == 2 and year.isdigit():
             year = f"20{year}"
         # Skip if match is part of a date (e.g. 03-08-2019)
         if not re.search(rf"\b\d{{1,2}}[-/\.]{re.escape(num)}[-/\.]{re.escape(year)}\b", search_text):
@@ -311,13 +332,12 @@ def extract_document_number_from_text(text: str) -> str | None:
     candidate = extract_pattern(
         search_text,
         [
-            r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?|SL|D)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
-            r"\bNO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9]{2,4})",
-            r"\b([0-9]{1,6}\s*/\s*[0-9]{2,4})\b",
+            r"\b(?:DOC(?:UMENT)?|REG(?:ISTRATION)?|SL|D)\.?\s*NO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9A-Z]{1,4})",
+            r"\bNO\.?\s*[:\-]?\s*([0-9]{1,6}\s*/\s*[0-9A-Z]{1,4})",
+            r"\b([0-9]{1,6}\s*/\s*[0-9A-Z]{1,4})\b",
         ],
     )
     if candidate:
-        # Ignore if this candidate is part of a standard date pattern e.g. 03-08-2019
         if re.search(r"\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b", search_text):
             date_match = re.search(r"\b(\d{2})[-/\.](\d{2})[-/\.](\d{4})\b", search_text)
             if date_match and candidate.strip().replace(" ", "") in (f"{date_match.group(2)}/{date_match.group(3)}", f"{date_match.group(1)}/{date_match.group(3)}"):
@@ -325,10 +345,9 @@ def extract_document_number_from_text(text: str) -> str | None:
         parts = re.split(r"[\/\s]+", candidate.strip())
         if len(parts) >= 2:
             yr = parts[1]
-            if len(yr) == 2:
+            if len(yr) == 2 and yr.isdigit():
                 yr = f"20{yr}"
             return f"{parts[0]}/{yr}"
-        return smart_number(candidate)
     return None
 
 
@@ -628,12 +647,18 @@ def infer_state(text: str) -> str | None:
 
 
 def infer_document_type(text: str) -> str | None:
-    if "AGREEMENT OF SALE-CUM-GENERAL POWER OF ATTORNEY" in text:
+    norm = normalize_upper(text)
+    collapsed = re.sub(r"[\s_\-]+", "", norm)
+    if "AGREEMENTOFSALECUMGENERALPOWEROFATTORNEY" in collapsed:
         return "Agreement of Sale-cum-General Power of Attorney"
-    if "GENERAL POWER OF ATTORNEY" in text:
+    if "AGREEMENTOFSALE" in collapsed and "GENERALPOWER" in collapsed:
+        return "Agreement of Sale-cum-General Power of Attorney"
+    if "GENERALPOWEROFATTORNEY" in collapsed:
         return "General Power of Attorney"
-    if "SALE DEED" in text:
+    if "SALEDEED" in collapsed or "DEEDOFSALE" in collapsed:
         return "Sale Deed"
+    if "AGREEMENTOFSALE" in collapsed:
+        return "Agreement of Sale"
     return None
 
 
@@ -816,7 +841,7 @@ def get_paddle_ocr_model() -> Any:
         return model
 
 
-def _run_paddle_ocr_impl(image_path: str) -> tuple[list[OCRLine], str, dict[str, float]]:
+def run_paddle_ocr_page_image(image: np.ndarray, page_num: int = 1) -> tuple[list[OCRLine], str, dict[str, float]]:
     timings: dict[str, float] = {}
     t0 = perf_counter()
     ocr = get_paddle_ocr_model()
@@ -826,7 +851,63 @@ def _run_paddle_ocr_impl(image_path: str) -> tuple[list[OCRLine], str, dict[str,
         timings["model_initialization_ms"] = 0.0
     timings["model_access_ms"] = (perf_counter() - t0) * 1000
 
-    # Robust image reading to bypass paddlex internal file reader bugs
+    h, w = image.shape[:2]
+
+    # Preprocess image contrast with CLAHE for dark/noisy scanned backgrounds
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image.copy()
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced_gray = clahe.apply(gray)
+    enhanced_img = cv2.cvtColor(enhanced_gray, cv2.COLOR_GRAY2BGR)
+
+    with _PADDLE_OCR_PREDICT_LOCK:
+        t0 = perf_counter()
+        result = ocr.predict(enhanced_img)[0]
+        timings["ocr_inference_ms"] = (perf_counter() - t0) * 1000
+
+    words = build_words_from_paddle(result)
+    lines = group_words_into_lines(words)
+
+    for line in lines:
+        line.page_num = page_num
+        line.page_height = h
+        line.page_width = w
+
+    # For Page 1 top region (0-30% height), perform an extra contrast pass to ensure top header text (e.g. 1736/5) is captured
+    if page_num == 1 and h > 100:
+        top_crop_h = int(h * 0.35)
+        top_gray = gray[:top_crop_h, :]
+        top_enhanced = cv2.equalizeHist(top_gray)
+        top_img = cv2.cvtColor(top_enhanced, cv2.COLOR_GRAY2BGR)
+
+        with _PADDLE_OCR_PREDICT_LOCK:
+            top_result = ocr.predict(top_img)[0]
+
+        top_words = build_words_from_paddle(top_result)
+        top_lines = group_words_into_lines(top_words)
+
+        existing_texts = {l.text for l in lines}
+        for t_line in top_lines:
+            t_line.page_num = 1
+            t_line.page_height = h
+            t_line.page_width = w
+            if t_line.text and t_line.text not in existing_texts:
+                lines.append(t_line)
+                existing_texts.add(t_line.text)
+
+    lines.sort(key=lambda l: (l.page_num, l.y_min, l.x_min))
+    raw_text = "\n".join(line.text for line in lines)
+    timings["ocr_word_parsing_ms"] = 0.0
+    timings["line_grouping_ms"] = 0.0
+    timings["ocr_text_join_ms"] = 0.0
+    timings["ocr_total_ms"] = timings.get("ocr_inference_ms", 0.0)
+    return lines, raw_text, timings
+
+
+def _run_paddle_ocr_impl(image_path: str) -> tuple[list[OCRLine], str, dict[str, float]]:
     t_read = perf_counter()
     image = cv2.imread(image_path)
     if image is None:
@@ -836,26 +917,8 @@ def _run_paddle_ocr_impl(image_path: str) -> tuple[list[OCRLine], str, dict[str,
             pass
     if image is None:
         raise ValueError(f"Unable to read image file: {image_path}")
-    timings["image_reading_ms"] = (perf_counter() - t_read) * 1000
 
-    with _PADDLE_OCR_PREDICT_LOCK:
-        t0 = perf_counter()
-        result = ocr.predict(image)[0]
-        timings["ocr_inference_ms"] = (perf_counter() - t0) * 1000
-
-    t0 = perf_counter()
-    words = build_words_from_paddle(result)
-    timings["ocr_word_parsing_ms"] = (perf_counter() - t0) * 1000
-
-    t0 = perf_counter()
-    lines = group_words_into_lines(words)
-    timings["line_grouping_ms"] = (perf_counter() - t0) * 1000
-
-    t0 = perf_counter()
-    raw_text = "\n".join(line.text for line in lines)
-    timings["ocr_text_join_ms"] = (perf_counter() - t0) * 1000
-    timings["ocr_total_ms"] = timings["ocr_inference_ms"] + timings["ocr_word_parsing_ms"] + timings["line_grouping_ms"] + timings["ocr_text_join_ms"]
-    return lines, raw_text, timings
+    return run_paddle_ocr_page_image(image, page_num=1)
 
 
 def _extract_stamp_metadata(lines: list[OCRLine], full_text: str) -> dict[str, Any]:
@@ -943,19 +1006,40 @@ def extract_survey_information(text: str) -> tuple[str | None, str | None, str |
     khata_number = None
     patta_number = None
 
-    survey_match = re.search(
-        r"\b(?:CSNO|C\.?S\.?\s*NO|CITY\s*SURVEY\s*(?:NO|NUMBER)?|SURVEY\s*(?:NO|NUMBER)?|SY\.?\s*NO)\.?\s*[:\-]?\s*([0-9A-Z\.\(\)/\-]+)",
+    sy_match = re.search(
+        r"\b(?:SURVEY\s*(?:NOS?|NUMBERS?)?|SY\.?\s*NOS?|C\.?S\.?\s*NOS?|CITY\s*SURVEY\s*NOS?)\.?\s*[:\-]?\s*([0-9\s,&\+ANDand/-]+)",
         text,
         flags=re.IGNORECASE
     )
-    if survey_match:
-        raw_sy = survey_match.group(1).strip(" .,;-")
-        paren_match = re.search(r"([0-9A-Z]+)\(([0-9A-Z/]+)\)?", raw_sy)
-        if paren_match:
-            survey_number = raw_sy
-            sub_survey_number = paren_match.group(2)
+    if sy_match:
+        raw_sy = sy_match.group(1).strip(" .,;-")
+        cleaned_sy = re.sub(r"\s+", " ", raw_sy)
+        cleaned_sy = re.sub(r"\bAND\b", ",", cleaned_sy, flags=re.IGNORECASE)
+        cleaned_sy = re.sub(r"&", ",", cleaned_sy)
+        items = [s.strip() for s in cleaned_sy.split(",") if s.strip().isdigit() or re.match(r"^[0-9]+/[0-9A-Za-z]+$", s.strip())]
+        if items:
+            survey_number = ", ".join(items)
         else:
             survey_number = raw_sy
+
+    sub_match = re.search(
+        r"\b(?:PLOT\s*(?:NOS?|NUMBERS?)?|SUB[\s_\-]*SURVEY\s*(?:NOS?|NUMBERS?)?)\.?\s*[:\-]?\s*([0-9\s,/&\+ANDand-]+)",
+        text,
+        flags=re.IGNORECASE
+    )
+    if sub_match:
+        raw_sub = sub_match.group(1).strip(" .,;-")
+        raw_sub = re.sub(r"\s+", " ", raw_sub)
+        raw_sub = re.sub(r"\bAND\b", "&", raw_sub, flags=re.IGNORECASE)
+        sub_items = re.findall(r"\b[0-9]+/[0-9A-Za-z]+\b", raw_sub)
+        if not sub_items:
+            sub_items = re.findall(r"\b[0-9]+\b", raw_sub)
+        if len(sub_items) >= 2:
+            sub_survey_number = " & ".join(sub_items)
+        elif sub_items:
+            sub_survey_number = sub_items[0]
+        else:
+            sub_survey_number = raw_sub
 
     khata_match = re.search(r"\bKHATA\s*(?:NO|NUMBER)?\.?\s*[:\-]?\s*([0-9A-Z/-]+)", text, flags=re.IGNORECASE)
     if khata_match:
@@ -966,6 +1050,43 @@ def extract_survey_information(text: str) -> tuple[str | None, str | None, str |
         patta_number = patta_match.group(1).strip(" .,;-")
 
     return survey_number, sub_survey_number, khata_number, patta_number
+
+
+def extract_property_area(text: str) -> str | None:
+    # 1. Check for PLOT AREA : 480.0 SQ. YDS. (OR) : 401.4 SQ. MTS.
+    match1 = re.search(
+        r"PLOT\s*AREA\s*[:\-]?\s*([0-9\.\s]+)\s*(?:SQ\.?\s*YDS\.?|SQ\.?\s*YARDS?)\.?\s*(?:\(?OR\)?\s*[:\-]?\s*([0-9\.\s]+)\s*(?:SQ\.?\s*MTS\.?|SQ\.?\s*MTRS?|SQ\.?\s*METRES?))?",
+        text,
+        flags=re.IGNORECASE
+    )
+    if match1:
+        sq_yds = match1.group(1).strip()
+        sq_mts = match1.group(2)
+        if sq_mts:
+            return f"{sq_yds} sq. yards ({sq_mts.strip()} sq. metres)"
+        return f"{sq_yds} sq. yards"
+
+    # 2. Check for admeasuring / extent of 480 Sq. Yards or 401.4 Sq. Mtrs.
+    match2 = re.search(
+        r"(?:admeasuring|extent\s*of)\s*(?:an\s*extent\s*of)?\s*([0-9\.\s]+)\s*(?:Sq\.?\s*Yards?|Sq\.?\s*Yds\.?)\.?\s*(?:or|/|\()\s*([0-9\.\s]+)\s*(?:Sq\.?\s*Mtrs?|Sq\.?\s*Metres?|Sq\.?\s*Mts\.?)\.?",
+        text,
+        flags=re.IGNORECASE
+    )
+    if match2:
+        sq_yds = match2.group(1).strip()
+        sq_mts = match2.group(2).strip()
+        return f"{sq_yds} sq. yards ({sq_mts} sq. metres)"
+
+    # 3. Fallback generic area
+    match3 = re.search(
+        r"(?:admeasuring|extent\s*of)\s*([0-9\.\s]+(?:\s*(?:Ac(?:res?)?|Gts|Guntas|Sq\.?\s*Yds|Sq\.?\s*Yards|Sq\.?\s*Mtrs|Sq\.?\s*Metres)[^,\.\n]*)+)",
+        text,
+        flags=re.IGNORECASE
+    )
+    if match3:
+        return normalize_space(match3.group(1))
+
+    return None
 
 
 def extract_property_location(full_text: str, parties: list[dict[str, Any]]) -> tuple[str | None, str | None, str | None]:
@@ -1015,6 +1136,11 @@ def extract_property_location(full_text: str, parties: list[dict[str, Any]]) -> 
                 if pd_match:
                     district = clean_field(pd_match.group(1))
 
+    if district:
+        d_upper = district.upper()
+        if "R.R." in d_upper or "RANGA REDDY" in d_upper or "R.R" in d_upper:
+            district = "R.R. District (Ranga Reddy District)"
+
     return village, mandal, district
 
 
@@ -1024,40 +1150,60 @@ def extract_land_document_from_lines(
     image_path: str,
     timings: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    from semantic_extractor import extract_fields_semantic
+
     pipeline_timings = dict(timings or {})
     t0 = perf_counter()
     full_text = normalize_upper(raw_text)
     pipeline_timings["text_normalization_ms"] = (perf_counter() - t0) * 1000
 
-    t0 = perf_counter()
     image = cv2.imread(image_path)
+    if image is None and os.path.exists(image_path):
+        try:
+            import pypdfium2 as pdfium
+            pdf = pdfium.PdfDocument(image_path)
+            pil_img = pdf[0].render(scale=2).to_pil()
+            img_np = np.array(pil_img)
+            image = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR) if img_np.ndim == 3 else cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+        except Exception:
+            pass
     if image is None:
-        raise ValueError(f"Unable to read image: {image_path}")
+        image = np.zeros((2000, 1500, 3), dtype=np.uint8)
     pipeline_timings["image_loading_ms"] = (perf_counter() - t0) * 1000
 
+    # ---- Semantic extraction: candidate-based field extraction ----
     t0 = perf_counter()
-    document_type = infer_document_type(full_text)
+    semantic_result, semantic_provenance, debug_candidates = extract_fields_semantic(lines)
+    pipeline_timings["semantic_extraction_ms"] = (perf_counter() - t0) * 1000
+
+    document_type = semantic_result["document_type"]
+    document_number = semantic_result["document_number"]
+    survey_no = semantic_result["survey_number"]
+    sub_survey_no = semantic_result["sub_survey_number"]
+    prop_area = semantic_result["property_area"]
+    village_val = semantic_result["village"]
+    mandal_val = semantic_result["mandal"]
+    district_val = semantic_result["district"]
+    stamp_serial_num = semantic_result["stamp_serial_number"]
+    stamp_value = semantic_result["stamp_value"]
+    stamp_sold_to = semantic_result["stamp_sold_to"]
+    parties_list = semantic_result["parties_list"]
+    document_date = semantic_result["document_date"]
+    execution_date = semantic_result["execution_date"]
+
     document_category = infer_document_category(document_type)
     state = infer_state(full_text)
-    document_number = extract_document_number_from_top_lines(lines, image.shape[0]) or extract_document_number(full_text)
-    # serial_number: search raw_text lines to avoid cross-line contamination in flattened full_text
-    serial_number = extract_serial_number(full_text) or extract_serial_number(raw_text)
-    stamp_number = extract_stamp_number(full_text)
-    stamp_value = extract_stamp_value(full_text)
-    # document_date: search raw_text per-line so dates are isolated
-    document_date = extract_document_date(raw_text) or extract_document_date(full_text)
-    execution_date = parse_execution_date(full_text)
-    stamp_metadata = _extract_stamp_metadata(lines, full_text)
-    pipeline_timings["field_extraction_ms"] = (perf_counter() - t0) * 1000
 
+    # Legacy stamp metadata extraction (for stamp_information block)
     t0 = perf_counter()
-    parties = parse_party_blocks(lines)
-    pipeline_timings["party_extraction_ms"] = (perf_counter() - t0) * 1000
+    stamp_number = extract_stamp_number(full_text)
+    stamp_metadata = _extract_stamp_metadata(lines, full_text)
+    pipeline_timings["stamp_metadata_ms"] = (perf_counter() - t0) * 1000
 
+    # Feature detection
     t0 = perf_counter()
     continuation_detected = "CONTD" in full_text or "2/P" in full_text or "NEXT PAGE" in full_text
     pii_detected = any(token in full_text for token in ("AADHAR", "AADHAAR", "ADHAR", "UID"))
-
     property_status = "CONTINUES_ON_NEXT_PAGE" if continuation_detected else "NOT_FOUND_ON_PAGE"
     languages = detect_languages(raw_text)
     signature_detected = detect_signature(image, lines)
@@ -1065,38 +1211,47 @@ def extract_land_document_from_lines(
     stamp_detected = bool(stamp_value or "NON JUDICIAL" in full_text or "STAMP VENDOR" in full_text)
     pipeline_timings["feature_detection_ms"] = (perf_counter() - t0) * 1000
 
-    t0 = perf_counter()
     stamp_vendor = extract_pattern(
         full_text,
         [
             r"\b([A-Z][A-Z\s]+)\s+LICENSED STAMP VENDOR\b",
         ],
     )
-    pipeline_timings["stamp_vendor_extraction_ms"] = (perf_counter() - t0) * 1000
 
-    t0 = perf_counter()
-    survey_no, sub_survey_no, khata_no, patta_no = extract_survey_information(full_text)
-    village_val, mandal_val, district_val = extract_property_location(full_text, parties)
-    if not serial_number and stamp_metadata.get("si_number"):
-        serial_number = stamp_metadata["si_number"]
+    # Survey info fallback for khata/patta (not in semantic extractor yet)
+    _, _, khata_no, patta_no = extract_survey_information(full_text)
+
+    # If stamp_sold_to not found by semantic extractor, fall back to stamp_metadata
+    if not stamp_sold_to:
+        stamp_sold_to = stamp_metadata.get("sold_to")
 
     output = {
         "document_type": document_type,
-        "document_category": document_category,
-        "state": state,
         "document_number": document_number,
-        "serial_number": serial_number,
-        "stamp_number": stamp_number,
+        "survey_number": survey_no,
+        "sub_survey_number": sub_survey_no,
+        "property_area": prop_area,
+        "village": village_val,
+        "mandal": mandal_val,
+        "district": district_val,
+        "stamp_serial_number": stamp_serial_num,
         "stamp_value": stamp_value,
+        "stamp_sold_to": stamp_sold_to,
+        "parties_list": parties_list,
         "document_date": document_date,
         "execution_date": execution_date,
-        "parties": parties,
+        "document_category": document_category,
+        "state": state,
+        "serial_number": stamp_serial_num,
+        "stamp_number": stamp_number,
+        "parties": parties_list,
         "property": {
             "survey_number": survey_no,
             "sub_survey_number": sub_survey_no,
             "khata_number": khata_no,
             "patta_number": patta_no,
-            "area": None,
+            "area": prop_area,
+            "property_area": prop_area,
             "boundaries": None,
             "village": village_val,
             "mandal": mandal_val,
@@ -1110,6 +1265,9 @@ def extract_land_document_from_lines(
             else None,
             "stamp_number": stamp_number,
             "stamp_value": stamp_value,
+            "stamp_serial_number": stamp_serial_num,
+            "stamp_sold_to": stamp_sold_to,
+            "sold_to": stamp_sold_to,
             **stamp_metadata,
         },
         "document_features": {
@@ -1136,15 +1294,17 @@ def extract_land_document_from_lines(
             "lines": [line.text for line in lines],
         },
     }
+    output["field_provenance"] = semantic_provenance
+    output["debug_candidates"] = debug_candidates
+
     pipeline_timings["json_object_build_ms"] = (perf_counter() - t0) * 1000
     pipeline_timings["core_pipeline_ms"] = (
         pipeline_timings.get("ocr_total_ms", 0.0)
         + pipeline_timings.get("text_normalization_ms", 0.0)
         + pipeline_timings.get("image_loading_ms", 0.0)
-        + pipeline_timings.get("field_extraction_ms", 0.0)
-        + pipeline_timings.get("party_extraction_ms", 0.0)
+        + pipeline_timings.get("semantic_extraction_ms", 0.0)
+        + pipeline_timings.get("stamp_metadata_ms", 0.0)
         + pipeline_timings.get("feature_detection_ms", 0.0)
-        + pipeline_timings.get("stamp_vendor_extraction_ms", 0.0)
         + pipeline_timings.get("json_object_build_ms", 0.0)
     )
     output["profiling_ms"] = {key: round(value, 3) for key, value in pipeline_timings.items()}
@@ -1152,13 +1312,50 @@ def extract_land_document_from_lines(
     return output
 
 
-def extract_land_document(image_path: str) -> dict[str, Any]:
+def extract_land_document(file_path: str) -> dict[str, Any]:
     t0 = perf_counter()
-    lines, raw_text, ocr_timings = run_paddle_ocr(image_path)
-    result = extract_land_document_from_lines(lines, raw_text, image_path, timings=ocr_timings)
-    result.setdefault("profiling_ms", {})
-    result["profiling_ms"]["pipeline_total_ms"] = round((perf_counter() - t0) * 1000, 3)
-    return result
+    is_pdf = file_path.lower().endswith(".pdf")
+    if not is_pdf and os.path.exists(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                header = f.read(4)
+                if header.startswith(b"%PDF"):
+                    is_pdf = True
+        except Exception:
+            pass
+
+    if is_pdf:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(file_path)
+        all_lines = []
+        all_raw_texts = []
+        total_ocr_ms = 0.0
+
+        for page_idx, page in enumerate(pdf, start=1):
+            pil_img = page.render(scale=3).to_pil()
+            img_np = np.array(pil_img)
+            if img_np.ndim == 3 and img_np.shape[2] == 3:
+                img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            else:
+                img_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+
+            p_lines, p_raw, p_timings = run_paddle_ocr_page_image(img_bgr, page_num=page_idx)
+            all_lines.extend(p_lines)
+            all_raw_texts.append(f"--- PAGE {page_idx} ---\n{p_raw}")
+            total_ocr_ms += p_timings.get("ocr_total_ms", 0.0)
+
+        full_raw_text = "\n\n".join(all_raw_texts)
+        ocr_timings = {"ocr_total_ms": total_ocr_ms}
+        result = extract_land_document_from_lines(all_lines, full_raw_text, file_path, timings=ocr_timings)
+        result.setdefault("profiling_ms", {})
+        result["profiling_ms"]["pipeline_total_ms"] = round((perf_counter() - t0) * 1000, 3)
+        return result
+    else:
+        lines, raw_text, ocr_timings = run_paddle_ocr(file_path)
+        result = extract_land_document_from_lines(lines, raw_text, file_path, timings=ocr_timings)
+        result.setdefault("profiling_ms", {})
+        result["profiling_ms"]["pipeline_total_ms"] = round((perf_counter() - t0) * 1000, 3)
+        return result
 
 
 def main() -> int:
