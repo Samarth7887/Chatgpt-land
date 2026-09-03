@@ -1444,12 +1444,23 @@ def render_page(
                 if isinstance(p, dict):
                     parties_html += f"<li>{html.escape(p.get('name') or '')} ({html.escape(p.get('role') or '')})</li>"
 
-            verification_url = f"http://{host_name}/?verification_id={rec_id}"
-            qr_b64 = generate_qr_base64(verification_url)
+            # Determine port and LAN host for cross-device network verification
+            port = "8001"
+            if ":" in str(host_name):
+                port = str(host_name).split(":")[-1]
+            lan_ip = get_lan_ip()
+            lan_host = f"{lan_ip}:{port}" if lan_ip != "127.0.0.1" else host_name
+
+            lan_verification_url = f"http://{lan_host}/?verification_id={rec_id}"
+            local_verification_url = f"http://localhost:{port}/?verification_id={rec_id}"
+
+            # Encode LAN URL into QR Code so any phone or other device on the Wi-Fi can open it
+            qr_target_url = lan_verification_url if lan_ip != "127.0.0.1" else local_verification_url
+            qr_b64 = generate_qr_base64(qr_target_url)
             if qr_b64:
                 qr_media_html = f'<img src="data:image/png;base64,{qr_b64}" alt="Verification QR Code" style="width: 190px; height: 190px; border-radius: 14px; border: 2px solid #cbd5e1; background: white; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); display: block; margin: 0 auto;">'
             else:
-                qr_media_html = f'<canvas id="qrCanvas" class="qr-code-canvas"></canvas><script>setTimeout(function() {{ drawQRCode("qrCanvas", "{verification_url}"); }}, 100);</script>'
+                qr_media_html = f'<canvas id="qrCanvas" class="qr-code-canvas"></canvas><script>setTimeout(function() {{ drawQRCode("qrCanvas", "{qr_target_url}"); }}, 100);</script>'
 
             console_markup = f"""
             <div style="background: #fafaf9; border: 3px double var(--accent-2); border-radius: 20px; padding: 30px; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
@@ -1476,14 +1487,22 @@ def render_page(
               <div style="margin-bottom: 10px; font-size: 14px;"><strong>Algorithm:</strong> RSA-PSS / SHA-256</div>
               <div style="margin-bottom: 10px; font-size: 14px;"><strong>Signature Status:</strong> {sig_result_text}</div>
 
-              <div class="qr-container" style="flex-direction: column; align-items: center; text-align: center; padding: 20px;">
-                <h3 style="margin-top: 0; color: var(--accent); font-size: 16px;">SCAN TO VERIFY</h3>
+              <div class="qr-container" style="flex-direction: column; align-items: center; text-align: center; padding: 24px; background: #ffffff; border-radius: 16px; border: 1px dashed var(--border);">
+                <h3 style="margin-top: 0; color: var(--accent); font-size: 16px; letter-spacing: 0.5px;">SCAN TO VERIFY</h3>
                 {qr_media_html}
-                <div style="margin-top: 10px;">
-                  <p style="margin: 0; font-size: 14px; color: var(--muted);">Scan this QR code from a device connected to the same local network.</p>
-                  <p style="margin: 6px 0 0 0; font-size: 13px; font-family: monospace; font-weight: bold; background: #e2e8f0; padding: 6px 12px; border-radius: 6px; word-break: break-all;">http://{host_name}/?verification_id={rec_id}</p>
-                  <p style="margin: 10px 0 0 0; font-size: 12px; color: var(--muted); font-style: italic;">
-                    Verification requires this application to be running and the device must be able to reach this computer over the local network.
+                <div style="margin-top: 14px; width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; align-items: center;">
+                  <p style="margin: 0; font-size: 13px; color: var(--muted);">Click a link below to verify directly, or scan the QR code from any device on your Wi-Fi:</p>
+                  
+                  <a href="{lan_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 13px; font-family: monospace; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1.5px solid #bae6fd; padding: 10px 14px; border-radius: 10px; text-decoration: none; word-break: break-all;">
+                    🌐 LAN Link (Other Devices on Wi-Fi): {lan_verification_url}
+                  </a>
+
+                  <a href="{local_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 12px; font-family: monospace; font-weight: 600; color: #475569; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; text-decoration: none; word-break: break-all;">
+                    💻 Localhost Link: {local_verification_url}
+                  </a>
+
+                  <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--muted); font-style: italic;">
+                    Devices must be connected to the same Wi-Fi / local network to access the LAN link.
                   </p>
                 </div>
               </div>
