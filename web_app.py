@@ -1414,8 +1414,6 @@ def render_page(
               <h3 style="color: var(--accent); border-top: 1px solid var(--border); padding-top: 15px; margin-top: 20px; font-size: 16px;">CRYPTOGRAPHIC SECURITY</h3>
               <div style="margin-bottom: 10px; font-size: 14px;"><strong>Algorithm:</strong> RSA-PSS / SHA-256</div>
               <div style="margin-bottom: 10px; font-size: 14px;"><strong>Signature Status:</strong> {sig_result_text}</div>
-              <div style="font-size: 14px; margin-bottom: 6px;"><strong>Digital Seal Signature:</strong></div>
-              <div class="signature-box">{sig}</div>
 
               <div class="qr-container" style="flex-direction: column; align-items: center; text-align: center; padding: 20px;">
                 <h3 style="margin-top: 0; color: var(--accent); font-size: 16px;">SCAN TO VERIFY</h3>
