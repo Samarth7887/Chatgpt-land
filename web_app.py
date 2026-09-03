@@ -1,9 +1,14 @@
+import sys
+import os
+_venv_site = r"C:\Users\meesa\Downloads\final land\.venv\Lib\site-packages"
+if os.path.exists(_venv_site) and _venv_site not in sys.path:
+    sys.path.insert(0, _venv_site)
+
 import base64
 import html
 import io
 import json
 import mimetypes
-import os
 import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -219,6 +224,55 @@ def get_preview_html(verification_id: str) -> str:
         except Exception:
             pass
     return ""
+
+
+PUBLIC_TUNNEL_URL: str = ""
+
+
+def get_public_tunnel_url() -> str:
+    global PUBLIC_TUNNEL_URL
+    if PUBLIC_TUNNEL_URL:
+        return PUBLIC_TUNNEL_URL
+    p_file = Path("scratch/public_url.txt")
+    if p_file.exists():
+        try:
+            url = p_file.read_text(encoding="utf-8").strip()
+            if url and url.startswith("https://"):
+                PUBLIC_TUNNEL_URL = url
+                return url
+        except Exception:
+            pass
+    return ""
+
+
+def start_public_tunnel(port: int) -> None:
+    global PUBLIC_TUNNEL_URL
+    cf_path = Path("scratch/cloudflared.exe")
+    if not cf_path.exists():
+        return
+    try:
+        import subprocess
+        proc = subprocess.Popen(
+            [str(cf_path), "tunnel", "--url", f"http://127.0.0.1:{port}", "--no-autoupdate"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        for line in proc.stdout:
+            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+            if m:
+                PUBLIC_TUNNEL_URL = m.group(0)
+                print(f"[TUNNEL] Mobile & Internet Access URL: {PUBLIC_TUNNEL_URL}")
+                try:
+                    Path("scratch/public_url.txt").write_text(
+                        PUBLIC_TUNNEL_URL, encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+                break
+    except Exception as exc:
+        print(f"[TUNNEL] Could not start tunnel: {exc}")
 
 
 # HTML Template for main app and verification console
@@ -1454,8 +1508,20 @@ def render_page(
             lan_verification_url = f"http://{lan_host}/?verification_id={rec_id}"
             local_verification_url = f"http://localhost:{port}/?verification_id={rec_id}"
 
-            # Encode LAN URL into QR Code so any phone or other device on the Wi-Fi can open it
-            qr_target_url = lan_verification_url if lan_ip != "127.0.0.1" else local_verification_url
+            public_tunnel = get_public_tunnel_url()
+            if public_tunnel:
+                public_verification_url = f"{public_tunnel}/?verification_id={rec_id}"
+                # Target the public tunnel URL for QR code so scanning on ANY phone works 100% without Wi-Fi router / firewall blocks
+                qr_target_url = public_verification_url
+                public_link_html = f"""
+                  <a href="{public_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 13px; font-family: monospace; font-weight: 700; color: #15803d; background: #f0fdf4; border: 1.5px solid #86efac; padding: 10px 14px; border-radius: 10px; text-decoration: none; word-break: break-all;">
+                    📱 Mobile Link (Works on Any Phone / Any Wi-Fi): {public_verification_url}
+                  </a>
+                """
+            else:
+                public_link_html = ""
+                qr_target_url = lan_verification_url if lan_ip != "127.0.0.1" else local_verification_url
+
             qr_b64 = generate_qr_base64(qr_target_url)
             if qr_b64:
                 qr_media_html = f'<img src="data:image/png;base64,{qr_b64}" alt="Verification QR Code" style="width: 190px; height: 190px; border-radius: 14px; border: 2px solid #cbd5e1; background: white; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); display: block; margin: 0 auto;">'
@@ -1491,10 +1557,12 @@ def render_page(
                 <h3 style="margin-top: 0; color: var(--accent); font-size: 16px; letter-spacing: 0.5px;">SCAN TO VERIFY</h3>
                 {qr_media_html}
                 <div style="margin-top: 14px; width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; align-items: center;">
-                  <p style="margin: 0; font-size: 13px; color: var(--muted);">Click a link below to verify directly, or scan the QR code from any device on your Wi-Fi:</p>
+                  <p style="margin: 0; font-size: 13px; color: var(--muted);">Click a link below to verify directly, or scan the QR code from any phone:</p>
                   
+                  {public_link_html}
+
                   <a href="{lan_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 13px; font-family: monospace; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1.5px solid #bae6fd; padding: 10px 14px; border-radius: 10px; text-decoration: none; word-break: break-all;">
-                    🌐 LAN Link (Other Devices on Wi-Fi): {lan_verification_url}
+                    🌐 Direct LAN Link: {lan_verification_url}
                   </a>
 
                   <a href="{local_verification_url}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 12px; font-family: monospace; font-weight: 600; color: #475569; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; text-decoration: none; word-break: break-all;">
@@ -1502,7 +1570,7 @@ def render_page(
                   </a>
 
                   <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--muted); font-style: italic;">
-                    Devices must be connected to the same Wi-Fi / local network to access the LAN link.
+                    Mobile link works across all devices, cellular data, and Wi-Fi networks.
                   </p>
                 </div>
               </div>
@@ -2518,6 +2586,8 @@ def main() -> int:
     lan_ip = get_lan_ip()
     print(f"Land extractor web app running locally at http://localhost:{port}")
     print(f"Accessible on your local network/LAN at http://{lan_ip}:{port}")
+    import threading
+    threading.Thread(target=start_public_tunnel, args=(port,), daemon=True).start()
     while True:
         try:
             server.serve_forever()
